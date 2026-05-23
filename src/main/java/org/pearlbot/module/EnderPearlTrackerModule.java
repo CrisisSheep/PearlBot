@@ -32,7 +32,6 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.Clie
 import org.pearlbot.PearlBotConfig;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import static com.github.rfresh2.EventConsumer.of;
@@ -110,9 +109,6 @@ public class EnderPearlTrackerModule extends Module {
     private void tryRegister(UUID pearlUuid, int entityId, int ownerEntityId,
                              double x, double y, double z) {
         UUID ownerUuid = resolveOwnerUuid(ownerEntityId);
-        if (ownerUuid == null) {
-            ownerUuid = resolveOwnerByProximity(x, y, z);
-        }
         Integer pendingOwnerEntityId = (ownerUuid == null && ownerEntityId > 0) ? ownerEntityId : null;
         registerChamber(pearlUuid, entityId, ownerUuid, pendingOwnerEntityId, x, y, z);
     }
@@ -145,37 +141,6 @@ public class EnderPearlTrackerModule extends Module {
         return owner.getUuid();
     }
 
-    private UUID resolveOwnerByProximity(double pearlX, double pearlY, double pearlZ) {
-        var entityCache = CACHE.getEntityCache();
-        if (entityCache == null) return null;
-        Map<Integer, Entity> entities = entityCache.getEntities();
-        if (entities == null || entities.isEmpty()) return null;
-
-        UUID botUuid = null;
-        var profileCache = CACHE.getProfileCache();
-        if (profileCache != null && profileCache.getProfile() != null) {
-            botUuid = profileCache.getProfile().getId();
-        }
-
-        Entity closest = null;
-        double closestDistSq = 4.0;
-        for (Entity entity : entities.values()) {
-            if (entity.getEntityType() != EntityType.PLAYER) continue;
-            UUID id = entity.getUuid();
-            if (id == null) continue;
-            if (botUuid != null && botUuid.equals(id)) continue;
-            double dx = entity.getX() - pearlX;
-            double dy = entity.getY() - pearlY;
-            double dz = entity.getZ() - pearlZ;
-            double distSq = dx * dx + dy * dy + dz * dz;
-            if (distSq < closestDistSq) {
-                closestDistSq = distSq;
-                closest = entity;
-            }
-        }
-        return closest != null ? closest.getUuid() : null;
-    }
-
     private void registerChamber(UUID pearlUuid, int entityId, UUID ownerUuid,
                                  Integer pendingOwnerEntityId, double x, double y, double z) {
         TrapdoorPos trapdoor = findTrapdoor(x, y, z);
@@ -204,22 +169,20 @@ public class EnderPearlTrackerModule extends Module {
             }
         }
         if (existing != null) {
-            existing.x = trapdoor.x;
-            existing.y = trapdoor.y;
-            existing.z = trapdoor.z;
-            existing.entityId = entityId;
             if (ownerUuid != null) {
                 if (!ownerUuid.equals(existing.ownerUuid)) {
                     info("Chamber (pearl {}) owner updated to {} at ({}, {}, {})",
-                        pearlUuid, ownerUuid, existing.x, existing.y, existing.z);
+                        pearlUuid, ownerUuid, trapdoor.x, trapdoor.y, trapdoor.z);
                 }
+                existing.x = trapdoor.x;
+                existing.y = trapdoor.y;
+                existing.z = trapdoor.z;
+                existing.entityId = entityId;
                 existing.ownerUuid = ownerUuid;
                 existing.pendingOwnerEntityId = null;
-            } else if (existing.ownerUuid == null) {
+            } else if (existing.ownerUuid == null && pendingOwnerEntityId != null) {
                 existing.pendingOwnerEntityId = pendingOwnerEntityId;
             }
-            debug("Refreshed chamber for owner {} (pearl {}) at trapdoor ({}, {}, {})",
-                existing.ownerUuid, pearlUuid, existing.x, existing.y, existing.z);
             return;
         }
 
@@ -289,21 +252,28 @@ public class EnderPearlTrackerModule extends Module {
         int[] ids = packet.getEntityIds();
         if (ids.length == 0) return;
 
-        var chunkCache = CACHE.getChunkCache();
-        if (chunkCache == null) return;
+        var player = CACHE.getPlayerCache() != null ? CACHE.getPlayerCache().getThePlayer() : null;
+        if (player == null) return;
+        double px = player.getX();
+        double py = player.getY();
+        double pz = player.getZ();
+        double viewSq = (double) PLUGIN_CONFIG.pearlViewDistance * PLUGIN_CONFIG.pearlViewDistance;
 
         PLUGIN_CONFIG.chambers.entrySet().removeIf(e -> {
             var c = e.getValue();
             for (int id : ids) {
                 if (id != c.entityId) continue;
-                if (chunkCache.getChunkSection(c.x, c.y, c.z) == null) {
-                    debug("Pearl entity {} despawned but chunk at ({}, {}, {}) is unloaded; keeping chamber",
-                        id, c.x, c.y, c.z);
-                    return false;
+                double dx = c.x - px;
+                double dy = c.y - py;
+                double dz = c.z - pz;
+                double distSq = dx * dx + dy * dy + dz * dz;
+                if (distSq <= viewSq) {
+                    info("Removing chamber for owner {} (pearl {}): entity {} despawned within view ({} <= {} blocks sq)",
+                        c.ownerUuid, e.getKey(), id, distSq, viewSq);
+                    return true;
                 }
-                info("Removing chamber for owner {} (pearl {}): entity {} despawned with chunk still loaded at ({}, {}, {})",
-                    c.ownerUuid, e.getKey(), id, c.x, c.y, c.z);
-                return true;
+                debug("Pearl entity {} despawned outside view distance ({} > {} blocks sq); keeping chamber",
+                    id, distSq, viewSq);
             }
             return false;
         });
