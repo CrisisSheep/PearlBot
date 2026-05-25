@@ -46,6 +46,14 @@ public class PearlBotMessages {
 
     public String discordAuthLinked = "Linked MC account `{mcUsername}`.";
 
+    public String discordQueued = "Queued: {names}. ";
+
+    public String discordAlreadyPending = "Already pending: {names}. ";
+
+    public String discordNoChamber = "No chamber: {names}.";
+
+    public String discordNothingToPull = "Nothing to pull.";
+
     public String format(String template, Object... keyValues) {
         String result = template;
         for (int i = 0; i + 1 < keyValues.length; i += 2) {
