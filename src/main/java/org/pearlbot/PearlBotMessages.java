@@ -29,6 +29,8 @@ public class PearlBotMessages {
 
     public String pullTimedOut = "Positioning timed out after {timeout}s.";
 
+    public String chamberEmpty = "Your stasis chamber is empty - no pearl to pull.";
+
     public String ownerTimedOut = "Expired - you did not log on within {timeout}s.";
 
     public String authUsage = "Usage: !auth <code> - get a code by typing !auth in Discord first.";
@@ -44,7 +46,15 @@ public class PearlBotMessages {
 
     public String discordAuthCode = "Whisper me `!auth {code}` in-game from each MC account you want to link. Expires in {ttl} minutes.";
 
+    public String discordAuthAristoisHint = "Can't whisper in-game? Join `auth.aristois.net`, then run `!auth aristois <code>` here.";
+
     public String discordAuthLinked = "Linked MC account `{mcUsername}`.";
+
+    public String discordAuthAristoisLinked = "Linked MC account `{mcUsername}` via Aristois.";
+
+    public String discordAuthAristoisFailed = "Aristois link failed: {reason}";
+
+    public String discordAuthAristoisDisabled = "Aristois linking is disabled.";
 
     public String discordQueued = "Queued: {names}. ";
 

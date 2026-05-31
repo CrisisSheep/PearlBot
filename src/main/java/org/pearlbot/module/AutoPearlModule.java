@@ -19,6 +19,7 @@ package org.pearlbot.module;
 
 import com.github.rfresh2.EventConsumer;
 import com.zenith.Proxy;
+import com.zenith.cache.data.entity.Entity;
 import com.zenith.discord.Embed;
 import com.zenith.event.chat.WhisperChatEvent;
 import com.zenith.event.client.ClientBotTick;
@@ -31,6 +32,7 @@ import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.EventListener;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.object.Direction;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.Hand;
+import org.geysermc.mcprotocollib.protocol.data.game.entity.type.EntityType;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundUseItemOnPacket;
 import org.pearlbot.PearlBotConfig;
 
@@ -51,9 +53,17 @@ import static org.pearlbot.PearlBotPlugin.PLUGIN_MESSAGES;
 public class AutoPearlModule extends Module {
     private static final long PULL_RETRY_INTERVAL_MS = 1_000L;
     private static final long IDLE_RETURN_DELAY_MS = 1500L;
+    private static final long GHOST_PRUNE_GRACE_MS = 5_000L;
     private static final String DISCORD_AUTH_CMD = "!auth";
     private static final String INGAME_AUTH_CMD = "!auth";
     private static final String INGAME_LIST_CMD = "list";
+    private static final String ARISTOIS_SUBCMD = "aristois";
+    private static final String ARISTOIS_TOKEN_URL = "https://auth.aristois.net/token/";
+    private static final String MOJANG_PROFILE_URL = "https://sessionserver.mojang.com/session/minecraft/profile/";
+
+    private static final java.net.http.HttpClient HTTP = java.net.http.HttpClient.newBuilder()
+        .connectTimeout(java.time.Duration.ofSeconds(10))
+        .build();
 
     private long lastAttemptMs = 0L;
     private PearlBotConfig.PendingPull activePull = null;
@@ -61,6 +71,8 @@ public class AutoPearlModule extends Module {
     private boolean readyAtTrapdoor = false;
     private long readyAtMs = 0L;
     private long idleReturnAtMs = 0L;
+
+    private final Map<UUID, Long> chamberEmptySinceMs = new HashMap<>();
 
     private final Map<String, PendingAuth> pendingAuthCodes = new HashMap<>();
     private final EventListener jdaListener = this::onJdaEvent;
@@ -204,9 +216,19 @@ public class AutoPearlModule extends Module {
         var channel = jdaEvent.getChannel();
 
         if (firstWord.equals(DISCORD_AUTH_CMD)) {
+            String[] authParts = content.split("\\s+");
+            if (authParts.length >= 2 && authParts[1].equalsIgnoreCase(ARISTOIS_SUBCMD)) {
+                String token = authParts.length >= 3 ? authParts[2].trim() : "";
+                handleAristoisLink(channel.getId(), discordUserId, discordUsername, token);
+                return;
+            }
             String code = newAuthCode(discordUserId, discordUsername);
             long ttl = (long) PLUGIN_CONFIG.discordTrigger.authCodeTtlMinutes;
-            channel.sendMessage("<@" + discordUserId + "> " + PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthCode, "code", code, "ttl", ttl)).queue();
+            String reply = PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthCode, "code", code, "ttl", ttl);
+            if (PLUGIN_CONFIG.discordTrigger.aristoisLinkingEnabled) {
+                reply += "\n" + PLUGIN_MESSAGES.discordAuthAristoisHint;
+            }
+            channel.sendMessage("<@" + discordUserId + "> " + reply).queue();
             return;
         }
 
@@ -295,6 +317,99 @@ public class AutoPearlModule extends Module {
         pendingAuthCodes.entrySet().removeIf(e -> e.getValue().expiresAtMs < now);
     }
 
+    private void handleAristoisLink(String channelId, String discordUserId, String discordUsername, String token) {
+        if (!PLUGIN_CONFIG.discordTrigger.aristoisLinkingEnabled) {
+            sendDiscordReply(channelId, discordUserId, PLUGIN_MESSAGES.discordAuthAristoisDisabled);
+            return;
+        }
+        if (token.isBlank()) {
+            sendDiscordReply(channelId, discordUserId,
+                PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthAristoisFailed, "reason", "missing code"));
+            return;
+        }
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                UUID mcUuid = fetchAristoisUuid(token);
+                if (mcUuid == null) {
+                    sendDiscordReply(channelId, discordUserId,
+                        PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthAristoisFailed, "reason", "invalid or expired code"));
+                    return;
+                }
+                String mcUsername = resolveUsernameFromUuid(mcUuid);
+                if (mcUsername == null) {
+                    sendDiscordReply(channelId, discordUserId,
+                        PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthAristoisFailed, "reason", "could not resolve username"));
+                    return;
+                }
+                PLUGIN_CONFIG.linkedAccounts.put(mcUuid, new PearlBotConfig.LinkedAccount(
+                    discordUserId, discordUsername, mcUsername, System.currentTimeMillis()));
+                info("Linked MC {} ({}) to Discord {} ({}) via Aristois", mcUsername, mcUuid, discordUsername, discordUserId);
+                sendDiscordReply(channelId, discordUserId,
+                    PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthAristoisLinked, "mcUsername", mcUsername));
+            } catch (Exception e) {
+                warn("Aristois link request failed: {}", e.toString());
+                sendDiscordReply(channelId, discordUserId,
+                    PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAuthAristoisFailed, "reason", "service unreachable"));
+            }
+        });
+    }
+
+    private UUID fetchAristoisUuid(String token) throws Exception {
+        var request = java.net.http.HttpRequest.newBuilder()
+            .uri(java.net.URI.create(ARISTOIS_TOKEN_URL + java.net.URLEncoder.encode(token, java.nio.charset.StandardCharsets.UTF_8)))
+            .timeout(java.time.Duration.ofSeconds(10))
+            .header("Accept", "application/json")
+            .GET()
+            .build();
+        var response = HTTP.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+        var json = com.google.gson.JsonParser.parseString(response.body()).getAsJsonObject();
+        if (!json.has("uuid") || json.get("uuid").isJsonNull()) return null;
+        return parseUuid(json.get("uuid").getAsString());
+    }
+
+    private String resolveUsernameFromUuid(UUID uuid) {
+        var cached = PlayerListsManager.getProfileFromUUID(uuid);
+        if (cached.isPresent()) return cached.get().name();
+        try {
+            var request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(MOJANG_PROFILE_URL + uuid.toString().replace("-", "")))
+                .timeout(java.time.Duration.ofSeconds(10))
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+            var response = HTTP.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200 || response.body().isBlank()) return null;
+            var json = com.google.gson.JsonParser.parseString(response.body()).getAsJsonObject();
+            return json.has("name") ? json.get("name").getAsString() : null;
+        } catch (Exception e) {
+            warn("Failed to resolve username for {}: {}", uuid, e.toString());
+            return null;
+        }
+    }
+
+    private static UUID parseUuid(String raw) {
+        String s = raw.trim().replace("-", "");
+        if (s.length() != 32) return null;
+        try {
+            return UUID.fromString(
+                s.substring(0, 8) + "-" + s.substring(8, 12) + "-" + s.substring(12, 16)
+                    + "-" + s.substring(16, 20) + "-" + s.substring(20));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private void sendDiscordReply(String channelId, String discordUserId, String message) {
+        if (channelId == null || channelId.isBlank()) return;
+        if (DISCORD == null || DISCORD.jda() == null) return;
+        var channel = DISCORD.jda().getTextChannelById(channelId);
+        if (channel == null) {
+            warn("Cannot send Discord reply: channel {} not found", channelId);
+            return;
+        }
+        channel.sendMessage("<@" + discordUserId + "> " + message).queue();
+    }
+
     private String triggerWordIngame() {
         String w = PLUGIN_CONFIG.triggerWord;
         return (w == null || w.isBlank()) ? "warp" : w.toLowerCase();
@@ -376,6 +491,8 @@ public class AutoPearlModule extends Module {
         if (!PLUGIN_CONFIG.enabled) return;
         if (!jdaListenerRegistered) registerJdaListener();
 
+        pruneGhostChambers();
+
         long now = System.currentTimeMillis();
         if (activePull != null) {
             if (!readyAtTrapdoor) {
@@ -386,6 +503,12 @@ public class AutoPearlModule extends Module {
                     abortActivePull(PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.pullTimedOut, "timeout", PLUGIN_CONFIG.pullTimeoutSeconds));
                     return;
                 }
+            } else if (!pearlPresentNear(activePull.blockX, activePull.blockY, activePull.blockZ)) {
+                warn("Chamber for {} at ({}, {}, {}) is empty at the trapdoor; pruning and cancelling instead of clicking",
+                    labelOf(activePull), activePull.blockX, activePull.blockY, activePull.blockZ);
+                removeChamberAt(activePull.blockX, activePull.blockY, activePull.blockZ);
+                abortActivePull(PLUGIN_MESSAGES.chamberEmpty);
+                return;
             } else if (isOwnerOnline(activePull.ownerUuid)) {
                 fireClick();
             } else {
@@ -473,6 +596,87 @@ public class AutoPearlModule extends Module {
     private boolean isOwnerOnline(UUID ownerUuid) {
         if (ownerUuid == null || CACHE == null || CACHE.getTabListCache() == null) return false;
         return CACHE.getTabListCache().get(ownerUuid).isPresent();
+    }
+
+    private void pruneGhostChambers() {
+        if (PLUGIN_CONFIG.chambers.isEmpty()) {
+            if (!chamberEmptySinceMs.isEmpty()) chamberEmptySinceMs.clear();
+            return;
+        }
+        if (CACHE == null || CACHE.getChunkCache() == null || CACHE.getEntityCache() == null) return;
+        var player = CACHE.getPlayerCache() != null ? CACHE.getPlayerCache().getThePlayer() : null;
+        if (player == null) return;
+
+        double px = player.getX();
+        double py = player.getY();
+        double pz = player.getZ();
+        double viewSq = (double) PLUGIN_CONFIG.pearlViewDistance * PLUGIN_CONFIG.pearlViewDistance;
+        long now = System.currentTimeMillis();
+
+        var it = PLUGIN_CONFIG.chambers.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
+            UUID key = entry.getKey();
+            PearlBotConfig.StasisChamber c = entry.getValue();
+
+            double dx = (c.x + 0.5) - px;
+            double dy = (c.y + 0.5) - py;
+            double dz = (c.z + 0.5) - pz;
+            boolean inRange = dx * dx + dy * dy + dz * dz <= viewSq;
+            boolean loaded = CACHE.getChunkCache().getChunkSection(c.x, c.y, c.z) != null;
+
+            if (!inRange || !loaded || pearlPresentNear(c.x, c.y, c.z)) {
+                chamberEmptySinceMs.remove(key);
+                continue;
+            }
+
+            Long since = chamberEmptySinceMs.get(key);
+            if (since == null) {
+                chamberEmptySinceMs.put(key, now);
+                continue;
+            }
+            if (now - since < GHOST_PRUNE_GRACE_MS) continue;
+
+            chamberEmptySinceMs.remove(key);
+            it.remove();
+            info("Pruned empty chamber for owner {} (pearl {}) at ({}, {}, {}): loaded and in render distance with no pearl present",
+                c.ownerUuid, key, c.x, c.y, c.z);
+            cancelPullsForChamber(c);
+        }
+    }
+
+    private boolean pearlPresentNear(int x, int y, int z) {
+        if (CACHE == null || CACHE.getEntityCache() == null) return true;
+        int radius = PLUGIN_CONFIG.trapdoorScanRadius;
+        for (Entity e : CACHE.getEntityCache().getEntities().values()) {
+            if (e.getEntityType() != EntityType.ENDER_PEARL) continue;
+            if ((int) Math.floor(e.getX()) != x) continue;
+            if ((int) Math.floor(e.getZ()) != z) continue;
+            if (Math.abs(Math.round(e.getY()) - (long) y) <= radius) return true;
+        }
+        return false;
+    }
+
+    private void removeChamberAt(int x, int y, int z) {
+        PLUGIN_CONFIG.chambers.entrySet().removeIf(e -> {
+            var c = e.getValue();
+            if (c.x != x || c.y != y || c.z != z) return false;
+            chamberEmptySinceMs.remove(e.getKey());
+            return true;
+        });
+    }
+
+    private void cancelPullsForChamber(PearlBotConfig.StasisChamber c) {
+        if (activePull != null
+            && activePull.blockX == c.x && activePull.blockY == c.y && activePull.blockZ == c.z) {
+            abortActivePull(PLUGIN_MESSAGES.chamberEmpty);
+            return;
+        }
+        PLUGIN_CONFIG.pendingPulls.removeIf(p -> {
+            if (p.blockX != c.x || p.blockY != c.y || p.blockZ != c.z) return false;
+            if (p.ownerName != null) sendWhisper(p.ownerName, PLUGIN_MESSAGES.chamberEmpty);
+            return true;
+        });
     }
 
     private void executePull(PearlBotConfig.PendingPull pull) {

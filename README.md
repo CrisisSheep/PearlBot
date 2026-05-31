@@ -71,6 +71,22 @@ To trigger pulls from Discord, link your Discord account to your Minecraft accou
 
 One Discord user can link any number of Minecraft accounts — just request a new code for each.
 
+### Linking without in-game chat (Aristois)
+
+If you can't whisper the bot in-game (e.g. you're stuck in queue or can't reach its server), you can link through the third-party [Aristois](https://aristois.net) auth server instead:
+
+1. Join the Minecraft server `auth.aristois.net` with the account you want to link. It gives you a token.
+2. In the configured Discord channel, run:
+   ```
+   !auth aristois <token>
+   ```
+3. The bot verifies the token, resolves your account, and confirms:
+   ```
+   @you Linked MC account `yourMcName` via Aristois.
+   ```
+
+This path trusts `auth.aristois.net` to authenticate the account on your behalf. It's a secondary option — disable it with `aristoisLinkingEnabled = false` in the Discord trigger config if you'd rather only allow in-game verification.
+
 After that, typing `!warp` in the channel queues a pull for every linked account that has a chamber.
 
 ## Credits & License

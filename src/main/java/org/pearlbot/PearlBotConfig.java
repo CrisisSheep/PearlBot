@@ -73,6 +73,7 @@ public class PearlBotConfig {
         public boolean enabled = true;
         public String channelId = "";
         public int authCodeTtlMinutes = 5;
+        public boolean aristoisLinkingEnabled = true;
     }
 
     public Map<UUID, LinkedAccount> linkedAccounts = new LinkedHashMap<>();
