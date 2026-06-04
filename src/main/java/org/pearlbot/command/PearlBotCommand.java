@@ -64,13 +64,14 @@ public class PearlBotCommand extends Command {
                 "trigger <word>",
                 "pulltimeout <seconds>",
                 "waittimeout <seconds>",
-                "whitelist <on/off>",
+                "whitelist <off|friends|on>",
                 "whitelist add <playerName>",
                 "whitelist remove <playerName>",
                 "whitelist list",
                 "whitelist clear",
                 "discord <on/off>",
                 "discord channel <channelId>",
+                "notifications <none|simple|verbose>",
                 "links",
                 "unlink <playerName>",
                 "maxchambers <count>"
@@ -297,9 +298,17 @@ public class PearlBotCommand extends Command {
             })));
 
         builder.then(literal("whitelist")
-            .then(argument("toggle", toggle()).executes(c -> {
-                PLUGIN_CONFIG.whitelist.enabled = getToggle(c, "toggle");
-                c.getSource().getEmbed().title("Whitelist " + toggleStrCaps(PLUGIN_CONFIG.whitelist.enabled));
+            .then(argument("mode", wordWithChars()).executes(c -> {
+                String raw = getString(c, "mode").toUpperCase();
+                PearlBotConfig.WhitelistMode mode;
+                try {
+                    mode = PearlBotConfig.WhitelistMode.valueOf(raw);
+                } catch (IllegalArgumentException e) {
+                    c.getSource().getEmbed().title("Unknown mode — use off, friends, or on");
+                    return ERROR;
+                }
+                PLUGIN_CONFIG.whitelistMode = mode;
+                c.getSource().getEmbed().title("Whitelist set to " + mode.name().toLowerCase());
                 return OK;
             }))
             .then(literal("add")
@@ -310,11 +319,11 @@ public class PearlBotCommand extends Command {
                         c.getSource().getEmbed().title("Invalid username: " + name);
                         return ERROR;
                     }
-                    if (PLUGIN_CONFIG.whitelist.players.containsKey(uuid)) {
+                    if (PLUGIN_CONFIG.whitelistedPlayers.containsKey(uuid)) {
                         c.getSource().getEmbed().title(name + " is already whitelisted");
                         return OK;
                     }
-                    PLUGIN_CONFIG.whitelist.players.put(uuid, new PearlBotConfig.WhitelistedPlayer(name, uuid));
+                    PLUGIN_CONFIG.whitelistedPlayers.put(uuid, new PearlBotConfig.WhitelistedPlayer(name, uuid));
                     c.getSource().getEmbed().title("Added " + name + " to whitelist");
                     return OK;
                 })))
@@ -326,7 +335,7 @@ public class PearlBotCommand extends Command {
                         c.getSource().getEmbed().title("Invalid username: " + name);
                         return ERROR;
                     }
-                    if (PLUGIN_CONFIG.whitelist.players.remove(uuid) == null) {
+                    if (PLUGIN_CONFIG.whitelistedPlayers.remove(uuid) == null) {
                         c.getSource().getEmbed().title(name + " is not in the whitelist");
                         return OK;
                     }
@@ -334,22 +343,22 @@ public class PearlBotCommand extends Command {
                     return OK;
                 })))
             .then(literal("list").executes(c -> {
-                if (PLUGIN_CONFIG.whitelist.players.isEmpty()) {
+                if (PLUGIN_CONFIG.whitelistedPlayers.isEmpty()) {
                     c.getSource().getEmbed().title("Whitelist is empty");
                     return OK;
                 }
                 StringBuilder sb = new StringBuilder();
-                for (var p : PLUGIN_CONFIG.whitelist.players.values()) {
-                    sb.append("- ").append(p.username).append(" (").append(p.uuid).append(")\n");
+                for (var p : PLUGIN_CONFIG.whitelistedPlayers.values()) {
+                    sb.append("- ").append(p.username).append("\n");
                 }
                 c.getSource().getEmbed()
-                    .title("Whitelist (" + PLUGIN_CONFIG.whitelist.players.size() + ")")
+                    .title("Whitelist (" + PLUGIN_CONFIG.whitelistedPlayers.size() + ")")
                     .description(sb.toString().trim());
                 return OK;
             }))
             .then(literal("clear").executes(c -> {
-                int n = PLUGIN_CONFIG.whitelist.players.size();
-                PLUGIN_CONFIG.whitelist.players.clear();
+                int n = PLUGIN_CONFIG.whitelistedPlayers.size();
+                PLUGIN_CONFIG.whitelistedPlayers.clear();
                 c.getSource().getEmbed().title("Cleared whitelist (" + n + " removed)");
                 return OK;
             })));
@@ -367,6 +376,21 @@ public class PearlBotCommand extends Command {
                     c.getSource().getEmbed().title("Discord trigger channel set to " + id);
                     return OK;
                 }))));
+
+        builder.then(literal("notifications")
+            .then(argument("level", wordWithChars()).executes(c -> {
+                String raw = getString(c, "level").toUpperCase();
+                PearlBotConfig.NotificationLevel level;
+                try {
+                    level = PearlBotConfig.NotificationLevel.valueOf(raw);
+                } catch (IllegalArgumentException e) {
+                    c.getSource().getEmbed().title("Unknown level — use none, simple, or verbose");
+                    return ERROR;
+                }
+                PLUGIN_CONFIG.notificationLevel = level;
+                c.getSource().getEmbed().title("Notifications set to " + level.name().toLowerCase());
+                return OK;
+            })));
 
         builder.then(literal("links").executes(c -> {
             if (PLUGIN_CONFIG.linkedAccounts.isEmpty()) {
@@ -430,14 +454,14 @@ public class PearlBotCommand extends Command {
             .addField("Idle Return", PLUGIN_CONFIG.idleGoal.enabled
                 ? "||(" + PLUGIN_CONFIG.idleGoal.x + ", " + PLUGIN_CONFIG.idleGoal.y + ", " + PLUGIN_CONFIG.idleGoal.z + ")||"
                 : "off")
-            .addField("Whitelist", toggleStr(PLUGIN_CONFIG.whitelist.enabled)
-                + " (" + PLUGIN_CONFIG.whitelist.players.size() + ")")
+            .addField("Whitelist", PLUGIN_CONFIG.whitelistMode.name().toLowerCase())
             .addField("Discord Triggers", toggleStr(PLUGIN_CONFIG.discordTrigger.enabled))
             .addField("Discord Channel", PLUGIN_CONFIG.discordTrigger.channelId.isBlank()
                 ? "unset" : PLUGIN_CONFIG.discordTrigger.channelId)
             .addField("Linked Accounts", PLUGIN_CONFIG.linkedAccounts.size())
             .addField("Max Chambers Per Player", PLUGIN_CONFIG.maxChambersPerPlayer == 0
-                ? "unlimited" : String.valueOf(PLUGIN_CONFIG.maxChambersPerPlayer));
+                ? "unlimited" : String.valueOf(PLUGIN_CONFIG.maxChambersPerPlayer))
+            .addField("Notifications", PLUGIN_CONFIG.notificationLevel.name().toLowerCase());
     }
 
     private UUID resolveUuid(String username) {
@@ -450,8 +474,6 @@ public class PearlBotCommand extends Command {
         if (uuid == null) return "unknown";
         var linked = PLUGIN_CONFIG.linkedAccounts.get(uuid);
         if (linked != null && linked.mcUsername != null) return linked.mcUsername;
-        var whitelisted = PLUGIN_CONFIG.whitelist.players.get(uuid);
-        if (whitelisted != null && whitelisted.username != null) return whitelisted.username;
         return PlayerListsManager.getProfileFromUUID(uuid)
             .map(profile -> profile.name())
             .orElse(uuid.toString());
