@@ -108,7 +108,7 @@ public class EnderPearlTrackerModule extends Module {
     private void tryRegister(UUID pearlUuid, int entityId, int ownerEntityId,
                              double x, double y, double z) {
         UUID ownerUuid = resolveOwnerUuid(ownerEntityId);
-        Integer pendingOwnerEntityId = (ownerUuid == null && ownerEntityId > 0) ? ownerEntityId : null;
+        Integer pendingOwnerEntityId = (ownerUuid == null && ownerEntityId != 0) ? ownerEntityId : null;
         registerChamber(pearlUuid, entityId, ownerUuid, pendingOwnerEntityId, x, y, z);
     }
 
@@ -131,7 +131,7 @@ public class EnderPearlTrackerModule extends Module {
     }
 
     private UUID resolveOwnerUuid(int ownerEntityId) {
-        if (ownerEntityId <= 0) return null;
+        if (ownerEntityId == 0) return null;
         var entityCache = CACHE.getEntityCache();
         if (entityCache == null) return null;
         Entity owner = entityCache.getEntities().get(ownerEntityId);
