@@ -23,7 +23,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+
 public class PearlBotConfig {
+    public enum NotificationLevel { NONE, SIMPLE, VERBOSE }
+    public enum WhitelistMode { OFF, FRIENDS, ON }
+
     public boolean enabled = true;
     public String triggerWord = "warp";
     public int pearlViewDistance = 64;
@@ -31,6 +35,8 @@ public class PearlBotConfig {
     public int pullTimeoutSeconds = 30;
     public int waitForOwnerSeconds = 180;
     public int maxChambersPerPlayer = 0;
+    public NotificationLevel notificationLevel = NotificationLevel.SIMPLE;
+    public WhitelistMode whitelistMode = WhitelistMode.FRIENDS;
 
     public final IdleGoal idleGoal = new IdleGoal();
     public static class IdleGoal {
@@ -39,23 +45,6 @@ public class PearlBotConfig {
         public int y = 0;
         public int z = 0;
         public int radius = 3;
-    }
-
-    public final Whitelist whitelist = new Whitelist();
-    public static class Whitelist {
-        public boolean enabled = true;
-        public Map<UUID, WhitelistedPlayer> players = new LinkedHashMap<>();
-    }
-
-    public static class WhitelistedPlayer {
-        public String username;
-        public UUID uuid;
-
-        public WhitelistedPlayer() {}
-        public WhitelistedPlayer(String username, UUID uuid) {
-            this.username = username;
-            this.uuid = uuid;
-        }
     }
 
     public Map<UUID, StasisChamber> chambers = new LinkedHashMap<>();
@@ -100,15 +89,17 @@ public class PearlBotConfig {
         public int blockY;
         public int blockZ;
         public long queuedAtMs;
+        public String source;
 
         public PendingPull() {}
-        public PendingPull(UUID ownerUuid, String ownerName, int x, int y, int z, long queuedAtMs) {
+        public PendingPull(UUID ownerUuid, String ownerName, int x, int y, int z, long queuedAtMs, String source) {
             this.ownerUuid = ownerUuid;
             this.ownerName = ownerName;
             this.blockX = x;
             this.blockY = y;
             this.blockZ = z;
             this.queuedAtMs = queuedAtMs;
+            this.source = source;
         }
     }
 }

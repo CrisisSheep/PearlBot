@@ -21,6 +21,7 @@ import com.github.rfresh2.EventConsumer;
 import com.zenith.Proxy;
 import com.zenith.cache.data.entity.Entity;
 import com.zenith.discord.Embed;
+import com.zenith.event.chat.PublicChatEvent;
 import com.zenith.event.chat.WhisperChatEvent;
 import com.zenith.event.client.ClientBotTick;
 import com.zenith.feature.pathfinder.goals.GoalNear;
@@ -47,6 +48,7 @@ import static com.zenith.Globals.BARITONE;
 import static com.zenith.Globals.CACHE;
 import static com.zenith.Globals.CONFIG;
 import static com.zenith.Globals.DISCORD;
+import static com.zenith.Globals.PLAYER_LISTS;
 import static org.pearlbot.PearlBotPlugin.PLUGIN_CONFIG;
 import static org.pearlbot.PearlBotPlugin.PLUGIN_MESSAGES;
 
@@ -89,7 +91,8 @@ public class AutoPearlModule extends Module {
     public List<EventConsumer<?>> registerEvents() {
         return List.of(
             of(ClientBotTick.class, e -> tickPending()),
-            of(WhisperChatEvent.class, this::onWhisper)
+            of(WhisperChatEvent.class, this::onWhisper),
+            of(PublicChatEvent.class, this::onPublicChat)
         );
     }
 
@@ -145,7 +148,7 @@ public class AutoPearlModule extends Module {
         }
 
         if (firstWord.equals(INGAME_LIST_CMD)) {
-            if (PLUGIN_CONFIG.whitelist.enabled && !PLUGIN_CONFIG.whitelist.players.containsKey(uuid)) return;
+            if (!isAllowed(uuid)) return;
             long count = PLUGIN_CONFIG.chambers.values().stream()
                 .filter(c -> uuid.equals(c.ownerUuid))
                 .count();
@@ -155,11 +158,10 @@ public class AutoPearlModule extends Module {
             return;
         }
 
-        if (!firstWord.equals(triggerWordIngame())) return;
+        String trigger = triggerWordIngame();
+        if (!firstWord.equals(trigger) && !firstWord.equals("!" + trigger)) return;
 
-        if (PLUGIN_CONFIG.whitelist.enabled && !PLUGIN_CONFIG.whitelist.players.containsKey(uuid)) {
-            return;
-        }
+        if (!isAllowed(uuid)) return;
 
         PearlBotConfig.StasisChamber chamber = findChamberFor(uuid);
         if (chamber == null) {
@@ -167,7 +169,34 @@ public class AutoPearlModule extends Module {
             return;
         }
 
-        enqueuePull(uuid, name, chamber);
+        enqueuePull(uuid, name, chamber, "in-game whisper");
+    }
+
+    private void onPublicChat(PublicChatEvent event) {
+        if (!PLUGIN_CONFIG.enabled) return;
+        String[] parts = event.message().trim().split("\\s+");
+        if (parts.length < 2) return;
+
+        String firstWord = parts[0].toLowerCase();
+        String trigger = triggerWordIngame();
+        if (!firstWord.equals(trigger) && !firstWord.equals("!" + trigger)) return;
+
+        if (!parts[1].equalsIgnoreCase(CONFIG.authentication.username)) return;
+
+        var sender = event.sender();
+        UUID uuid = sender.getProfileId();
+        String name = sender.getName();
+        if (uuid == null) return;
+
+        if (!isAllowed(uuid)) return;
+
+        PearlBotConfig.StasisChamber chamber = findChamberFor(uuid);
+        if (chamber == null) {
+            sendWhisper(name, PLUGIN_MESSAGES.noPearlFound);
+            return;
+        }
+
+        enqueuePull(uuid, name, chamber, "public chat");
     }
 
     private void handleAuthWhisper(UUID mcUuid, String mcUsername, String code) {
@@ -268,7 +297,7 @@ public class AutoPearlModule extends Module {
                 noChamber.add(account.mcUsername);
                 continue;
             }
-            if (enqueuePull(mcUuid, account.mcUsername, chamber)) {
+            if (enqueuePull(mcUuid, account.mcUsername, chamber, discordUsername)) {
                 queued.add(account.mcUsername);
             } else {
                 alreadyPending.add(account.mcUsername);
@@ -399,6 +428,17 @@ public class AutoPearlModule extends Module {
         }
     }
 
+    private void pullNotification(Embed embed, boolean verboseOnly) {
+        pullNotification(embed, verboseOnly, false);
+    }
+
+    private void pullNotification(Embed embed, boolean verboseOnly, boolean ownerOffline) {
+        var level = PLUGIN_CONFIG.notificationLevel;
+        if (level == PearlBotConfig.NotificationLevel.NONE) return;
+        if (verboseOnly && level != PearlBotConfig.NotificationLevel.VERBOSE && !ownerOffline) return;
+        discordAndIngameNotification(embed);
+    }
+
     private void sendDiscordReply(String channelId, String discordUserId, String message) {
         if (channelId == null || channelId.isBlank()) return;
         if (DISCORD == null || DISCORD.jda() == null) return;
@@ -408,6 +448,14 @@ public class AutoPearlModule extends Module {
             return;
         }
         channel.sendMessage("<@" + discordUserId + "> " + message).queue();
+    }
+
+    private boolean isAllowed(UUID uuid) {
+        return switch (PLUGIN_CONFIG.whitelistMode) {
+            case OFF -> true;
+            case FRIENDS -> PLAYER_LISTS.getFriendsList().contains(uuid);
+            case ON -> PLAYER_LISTS.getWhitelist().contains(uuid);
+        };
     }
 
     private String triggerWordIngame() {
@@ -440,15 +488,13 @@ public class AutoPearlModule extends Module {
         if (name != null) {
             sendWhisper(name, PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.maxPearlsExceeded, "count", count, "max", max));
         }
-        enqueuePull(ownerUuid, name, chamber);
+        enqueuePull(ownerUuid, name, chamber, "max chambers exceeded");
     }
 
     private String resolvePlayerName(UUID uuid) {
         if (uuid == null) return null;
         var linked = PLUGIN_CONFIG.linkedAccounts.get(uuid);
         if (linked != null && linked.mcUsername != null) return linked.mcUsername;
-        var whitelisted = PLUGIN_CONFIG.whitelist.players.get(uuid);
-        if (whitelisted != null && whitelisted.username != null) return whitelisted.username;
         return PlayerListsManager.getProfileFromUUID(uuid)
             .map(p -> p.name())
             .orElse(null);
@@ -462,11 +508,15 @@ public class AutoPearlModule extends Module {
     }
 
     public boolean enqueuePull(UUID ownerUuid, String requesterName, PearlBotConfig.StasisChamber chamber) {
+        return enqueuePull(ownerUuid, requesterName, chamber, null);
+    }
+
+    public boolean enqueuePull(UUID ownerUuid, String requesterName, PearlBotConfig.StasisChamber chamber, String source) {
         boolean already = PLUGIN_CONFIG.pendingPulls.stream()
             .anyMatch(p -> ownerUuid.equals(p.ownerUuid));
         if (already) return false;
         PLUGIN_CONFIG.pendingPulls.add(new PearlBotConfig.PendingPull(
-            ownerUuid, requesterName, chamber.x, chamber.y, chamber.z, System.currentTimeMillis()));
+            ownerUuid, requesterName, chamber.x, chamber.y, chamber.z, System.currentTimeMillis(), source));
         return true;
     }
 
@@ -565,11 +615,11 @@ public class AutoPearlModule extends Module {
         if (pull == null) return;
 
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
-        discordAndIngameNotification(Embed.builder()
+        pullNotification(Embed.builder()
             .title("Pearl Pull Cancelled")
             .addField("Owner", labelOf(pull))
             .description(whisperReason)
-            .errorColor());
+            .errorColor(), false);
 
         if (pull.ownerName != null && whisperReason != null) {
             sendWhisper(pull.ownerName, whisperReason);
@@ -688,11 +738,11 @@ public class AutoPearlModule extends Module {
 
         info("Positioning for {} at {} {} {} (owner currently {})",
             label, tx, ty, tz, ownerOnlineAtStart ? "online" : "OFFLINE");
-        discordAndIngameNotification(Embed.builder()
+        pullNotification(Embed.builder()
             .title("Positioning for Pull")
             .addField("Owner", label)
             .addField("Owner Online", ownerOnlineAtStart ? "yes" : "no")
-            .primaryColor());
+            .primaryColor(), true, !ownerOnlineAtStart);
 
         var pf = CONFIG.client.extra.pathfinder;
         boolean prevAllowBreak = pf.allowBreak;
@@ -731,10 +781,12 @@ public class AutoPearlModule extends Module {
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
 
-        discordAndIngameNotification(Embed.builder()
+        var pullEmbed = Embed.builder()
             .title("Pearl Pulled")
             .addField("Owner", label)
-            .successColor());
+            .addField("Position", "||" + tx + " " + ty + " " + tz + "||");
+        if (pull.source != null) pullEmbed.addField("Triggered by", pull.source);
+        pullNotification(pullEmbed.successColor(), false);
 
         int remaining = Math.max(0, remainingPearlsFor(pull.ownerUuid) - 1);
         if (pull.ownerName != null) {

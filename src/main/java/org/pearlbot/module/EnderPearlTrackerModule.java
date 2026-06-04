@@ -19,6 +19,7 @@ package org.pearlbot.module;
 
 import com.github.rfresh2.EventConsumer;
 import com.zenith.cache.data.entity.Entity;
+import com.zenith.mc.block.Block;
 import com.zenith.event.client.ClientBotTick;
 import com.zenith.module.api.Module;
 import com.zenith.network.codec.PacketHandlerCodec;
@@ -60,11 +61,8 @@ public class EnderPearlTrackerModule extends Module {
     }
 
     private void invalidateStalePendingOwners() {
-        if (PLUGIN_CONFIG.chambers.isEmpty()) return;
         for (var chamber : PLUGIN_CONFIG.chambers.values()) {
-            if (chamber.pendingOwnerEntityId != null) {
-                chamber.pendingOwnerEntityId = null;
-            }
+            chamber.pendingOwnerEntityId = null;
         }
     }
 
@@ -225,12 +223,15 @@ public class EnderPearlTrackerModule extends Module {
             int stateId = section.getBlock(bx & 15, ty & 15, bz & 15);
             if (stateId == 0) continue;
             var block = BLOCK_DATA.getBlockDataFromBlockStateId(stateId);
-            if (block == null) continue;
-            if (block.name().endsWith("_trapdoor")) {
+            if (isTrapdoor(block)) {
                 return new TrapdoorPos(bx, ty, bz);
             }
         }
         return null;
+    }
+
+    private static boolean isTrapdoor(Block block) {
+        return block != null && block.name().endsWith("_trapdoor");
     }
 
     private void onBlockUpdate(ClientboundBlockUpdatePacket packet) {
@@ -240,8 +241,7 @@ public class EnderPearlTrackerModule extends Module {
         int by = entry.getY();
         int bz = entry.getZ();
         var block = BLOCK_DATA.getBlockDataFromBlockStateId(entry.getBlock());
-        boolean stillTrapdoor = block != null && block.name().endsWith("_trapdoor");
-        if (stillTrapdoor) return;
+        if (isTrapdoor(block)) return;
 
         PLUGIN_CONFIG.chambers.entrySet().removeIf(e -> {
             var c = e.getValue();
@@ -257,7 +257,8 @@ public class EnderPearlTrackerModule extends Module {
         int[] ids = packet.getEntityIds();
         if (ids.length == 0) return;
 
-        var player = CACHE.getPlayerCache() != null ? CACHE.getPlayerCache().getThePlayer() : null;
+        var playerCache = CACHE.getPlayerCache();
+        var player = playerCache != null ? playerCache.getThePlayer() : null;
         if (player == null) return;
         double px = player.getX();
         double py = player.getY();
@@ -279,6 +280,7 @@ public class EnderPearlTrackerModule extends Module {
                 }
                 debug("Pearl entity {} despawned outside view distance ({} > {} blocks sq); keeping chamber",
                     id, distSq, viewSq);
+                break;
             }
             return false;
         });
