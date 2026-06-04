@@ -65,6 +65,10 @@ public class PearlBotCommand extends Command {
                 "pulltimeout <seconds>",
                 "waittimeout <seconds>",
                 "whitelist <off|friends|on>",
+                "whitelist add <playerName>",
+                "whitelist remove <playerName>",
+                "whitelist list",
+                "whitelist clear",
                 "discord <on/off>",
                 "discord channel <channelId>",
                 "notifications <none|simple|verbose>",
@@ -305,6 +309,57 @@ public class PearlBotCommand extends Command {
                 }
                 PLUGIN_CONFIG.whitelistMode = mode;
                 c.getSource().getEmbed().title("Whitelist set to " + mode.name().toLowerCase());
+                return OK;
+            }))
+            .then(literal("add")
+                .then(argument("playerName", wordWithChars()).executes(c -> {
+                    String name = getString(c, "playerName");
+                    UUID uuid = resolveUuid(name);
+                    if (uuid == null) {
+                        c.getSource().getEmbed().title("Invalid username: " + name);
+                        return ERROR;
+                    }
+                    if (PLUGIN_CONFIG.whitelistedPlayers.containsKey(uuid)) {
+                        c.getSource().getEmbed().title(name + " is already whitelisted");
+                        return OK;
+                    }
+                    PLUGIN_CONFIG.whitelistedPlayers.put(uuid, new PearlBotConfig.WhitelistedPlayer(name, uuid));
+                    c.getSource().getEmbed().title("Added " + name + " to whitelist");
+                    return OK;
+                })))
+            .then(literal("remove")
+                .then(argument("playerName", wordWithChars()).executes(c -> {
+                    String name = getString(c, "playerName");
+                    UUID uuid = resolveUuid(name);
+                    if (uuid == null) {
+                        c.getSource().getEmbed().title("Invalid username: " + name);
+                        return ERROR;
+                    }
+                    if (PLUGIN_CONFIG.whitelistedPlayers.remove(uuid) == null) {
+                        c.getSource().getEmbed().title(name + " is not in the whitelist");
+                        return OK;
+                    }
+                    c.getSource().getEmbed().title("Removed " + name + " from whitelist");
+                    return OK;
+                })))
+            .then(literal("list").executes(c -> {
+                if (PLUGIN_CONFIG.whitelistedPlayers.isEmpty()) {
+                    c.getSource().getEmbed().title("Whitelist is empty");
+                    return OK;
+                }
+                StringBuilder sb = new StringBuilder();
+                for (var p : PLUGIN_CONFIG.whitelistedPlayers.values()) {
+                    sb.append("- ").append(p.username).append("\n");
+                }
+                c.getSource().getEmbed()
+                    .title("Whitelist (" + PLUGIN_CONFIG.whitelistedPlayers.size() + ")")
+                    .description(sb.toString().trim());
+                return OK;
+            }))
+            .then(literal("clear").executes(c -> {
+                int n = PLUGIN_CONFIG.whitelistedPlayers.size();
+                PLUGIN_CONFIG.whitelistedPlayers.clear();
+                c.getSource().getEmbed().title("Cleared whitelist (" + n + " removed)");
                 return OK;
             })));
 

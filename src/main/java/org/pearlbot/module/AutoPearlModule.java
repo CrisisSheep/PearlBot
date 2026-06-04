@@ -454,7 +454,7 @@ public class AutoPearlModule extends Module {
         return switch (PLUGIN_CONFIG.whitelistMode) {
             case OFF -> true;
             case FRIENDS -> PLAYER_LISTS.getFriendsList().contains(uuid);
-            case ON -> PLAYER_LISTS.getWhitelist().contains(uuid);
+            case ON -> PLUGIN_CONFIG.whitelistedPlayers.containsKey(uuid);
         };
     }
 

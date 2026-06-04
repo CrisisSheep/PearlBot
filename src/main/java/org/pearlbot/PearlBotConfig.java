@@ -37,6 +37,18 @@ public class PearlBotConfig {
     public int maxChambersPerPlayer = 0;
     public NotificationLevel notificationLevel = NotificationLevel.SIMPLE;
     public WhitelistMode whitelistMode = WhitelistMode.FRIENDS;
+    public Map<UUID, WhitelistedPlayer> whitelistedPlayers = new LinkedHashMap<>();
+
+    public static class WhitelistedPlayer {
+        public String username;
+        public UUID uuid;
+
+        public WhitelistedPlayer() {}
+        public WhitelistedPlayer(String username, UUID uuid) {
+            this.username = username;
+            this.uuid = uuid;
+        }
+    }
 
     public final IdleGoal idleGoal = new IdleGoal();
     public static class IdleGoal {
