@@ -154,7 +154,7 @@ public class EnderPearlTrackerModule extends Module {
             UUID staleKey = null;
             for (var e : PLUGIN_CONFIG.chambers.entrySet()) {
                 PearlBotConfig.StasisChamber c = e.getValue();
-                if (c.x == trapdoor.x && c.z == trapdoor.z) {
+                if (c.x == trapdoor.x && c.y == trapdoor.y && c.z == trapdoor.z) {
                     staleKey = e.getKey();
                     existing = c;
                     break;
@@ -168,15 +168,15 @@ public class EnderPearlTrackerModule extends Module {
             }
         }
         if (existing != null) {
+            existing.x = trapdoor.x;
+            existing.y = trapdoor.y;
+            existing.z = trapdoor.z;
+            existing.entityId = entityId;
             if (ownerUuid != null) {
                 if (!ownerUuid.equals(existing.ownerUuid)) {
                     info("Chamber (pearl {}) owner updated to {} at ({}, {}, {})",
                         pearlUuid, ownerUuid, trapdoor.x, trapdoor.y, trapdoor.z);
                 }
-                existing.x = trapdoor.x;
-                existing.y = trapdoor.y;
-                existing.z = trapdoor.z;
-                existing.entityId = entityId;
                 existing.ownerUuid = ownerUuid;
                 existing.pendingOwnerEntityId = null;
             } else if (existing.ownerUuid == null && pendingOwnerEntityId != null) {
@@ -267,6 +267,7 @@ public class EnderPearlTrackerModule extends Module {
 
         PLUGIN_CONFIG.chambers.entrySet().removeIf(e -> {
             var c = e.getValue();
+            if (c.entityId == 0) return false;
             for (int id : ids) {
                 if (id != c.entityId) continue;
                 double dx = c.x - px;

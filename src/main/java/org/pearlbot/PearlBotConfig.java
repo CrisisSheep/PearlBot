@@ -29,7 +29,8 @@ public class PearlBotConfig {
     public enum WhitelistMode { OFF, FRIENDS, ON }
 
     public boolean enabled = true;
-    public String triggerWord = "warp";
+    public boolean pearlDrop = false;
+    public List<String> triggerWords = new ArrayList<>(java.util.List.of("warp"));
     public int pearlViewDistance = 64;
     public int trapdoorScanRadius = 5;
     public int pullTimeoutSeconds = 30;
@@ -64,7 +65,7 @@ public class PearlBotConfig {
         public int x;
         public int y;
         public int z;
-        public int entityId;
+        public transient int entityId;
         public UUID ownerUuid;
         public Integer pendingOwnerEntityId;
     }
@@ -73,6 +74,7 @@ public class PearlBotConfig {
     public static class DiscordTrigger {
         public boolean enabled = true;
         public String channelId = "";
+        public String prefix = "!";
         public int authCodeTtlMinutes = 5;
         public boolean aristoisLinkingEnabled = true;
     }

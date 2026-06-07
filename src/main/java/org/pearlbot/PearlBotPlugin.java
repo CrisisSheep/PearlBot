@@ -17,6 +17,7 @@
  */
 package org.pearlbot;
 
+import com.zenith.feature.whitelist.PlayerListsManager;
 import com.zenith.plugin.api.Plugin;
 import com.zenith.plugin.api.PluginAPI;
 import com.zenith.plugin.api.ZenithProxyPlugin;
@@ -24,6 +25,8 @@ import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
 import org.pearlbot.command.PearlBotCommand;
 import org.pearlbot.module.AutoPearlModule;
 import org.pearlbot.module.EnderPearlTrackerModule;
+
+import java.util.UUID;
 
 @Plugin(
     id = BuildConstants.PLUGIN_ID,
@@ -45,10 +48,21 @@ public class PearlBotPlugin implements ZenithProxyPlugin {
         LOG = pluginAPI.getLogger();
         LOG.info("PearlBot loading...");
         PLUGIN_CONFIG = API.registerConfig(BuildConstants.PLUGIN_ID, PearlBotConfig.class);
+        PLUGIN_CONFIG.chambers = new java.util.concurrent.ConcurrentHashMap<>(PLUGIN_CONFIG.chambers);
+        PLUGIN_CONFIG.linkedAccounts = new java.util.concurrent.ConcurrentHashMap<>(PLUGIN_CONFIG.linkedAccounts);
+        PLUGIN_CONFIG.pendingPulls = new java.util.concurrent.CopyOnWriteArrayList<>(PLUGIN_CONFIG.pendingPulls);
+        PLUGIN_CONFIG.triggerWords = new java.util.concurrent.CopyOnWriteArrayList<>(PLUGIN_CONFIG.triggerWords);
         PLUGIN_MESSAGES = API.registerConfig(BuildConstants.PLUGIN_ID + "-messages", PearlBotMessages.class);
         API.registerModule(new EnderPearlTrackerModule());
         API.registerModule(new AutoPearlModule());
         API.registerCommand(new PearlBotCommand());
         LOG.info("PearlBot loaded!");
+    }
+
+    public static String resolvePlayerName(UUID uuid) {
+        if (uuid == null) return null;
+        var linked = PLUGIN_CONFIG.linkedAccounts.get(uuid);
+        if (linked != null && linked.mcUsername != null) return linked.mcUsername;
+        return PlayerListsManager.getProfileFromUUID(uuid).map(p -> p.name()).orElse(null);
     }
 }
