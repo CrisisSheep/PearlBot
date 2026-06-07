@@ -24,11 +24,16 @@ import com.zenith.discord.Embed;
 import com.zenith.event.chat.PublicChatEvent;
 import com.zenith.event.chat.WhisperChatEvent;
 import com.zenith.event.client.ClientBotTick;
+import com.zenith.feature.inventory.InventoryActionRequest;
+import com.zenith.feature.inventory.actions.DropItem;
+import com.zenith.feature.inventory.util.InventoryUtil;
 import com.zenith.feature.pathfinder.goals.GoalNear;
 import com.zenith.feature.whitelist.PlayerListsManager;
 import com.zenith.mc.block.BlockPos;
+import com.zenith.mc.item.ItemRegistry;
 import com.zenith.module.api.Module;
 import com.zenith.util.ChatUtil;
+import org.geysermc.mcprotocollib.protocol.data.game.inventory.DropItemAction;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.EventListener;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.object.Direction;
@@ -41,6 +46,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static com.github.rfresh2.EventConsumer.of;
@@ -48,7 +54,10 @@ import static com.zenith.Globals.BARITONE;
 import static com.zenith.Globals.CACHE;
 import static com.zenith.Globals.CONFIG;
 import static com.zenith.Globals.DISCORD;
+import static com.zenith.Globals.INVENTORY;
 import static com.zenith.Globals.PLAYER_LISTS;
+import org.pearlbot.PearlBotPlugin;
+
 import static org.pearlbot.PearlBotPlugin.PLUGIN_CONFIG;
 import static org.pearlbot.PearlBotPlugin.PLUGIN_MESSAGES;
 
@@ -68,15 +77,15 @@ public class AutoPearlModule extends Module {
         .build();
 
     private long lastAttemptMs = 0L;
-    private PearlBotConfig.PendingPull activePull = null;
+    private volatile PearlBotConfig.PendingPull activePull = null;
     private long activePullStartMs = 0L;
-    private boolean readyAtTrapdoor = false;
-    private long readyAtMs = 0L;
+    private volatile boolean readyAtTrapdoor = false;
+    private volatile long readyAtMs = 0L;
     private long idleReturnAtMs = 0L;
 
     private final Map<UUID, Long> chamberEmptySinceMs = new HashMap<>();
 
-    private final Map<String, PendingAuth> pendingAuthCodes = new HashMap<>();
+    private final Map<String, PendingAuth> pendingAuthCodes = new ConcurrentHashMap<>();
     private final EventListener jdaListener = this::onJdaEvent;
     private boolean jdaListenerRegistered = false;
 
@@ -158,8 +167,7 @@ public class AutoPearlModule extends Module {
             return;
         }
 
-        String trigger = triggerWordIngame();
-        if (!firstWord.equals(trigger) && !firstWord.equals("!" + trigger)) return;
+        if (!matchesInGameTrigger(firstWord)) return;
 
         if (!isAllowed(uuid)) return;
 
@@ -178,8 +186,7 @@ public class AutoPearlModule extends Module {
         if (parts.length < 2) return;
 
         String firstWord = parts[0].toLowerCase();
-        String trigger = triggerWordIngame();
-        if (!firstWord.equals(trigger) && !firstWord.equals("!" + trigger)) return;
+        if (!matchesInGameTrigger(firstWord)) return;
 
         if (!parts[1].equalsIgnoreCase(CONFIG.authentication.username)) return;
 
@@ -261,37 +268,36 @@ public class AutoPearlModule extends Module {
             return;
         }
 
-        if (!firstWord.equals(triggerWordDiscord())) return;
+        if (!matchesDiscordTrigger(firstWord)) return;
 
         String targetName = content.split("\\s+", 2).length > 1
             ? content.split("\\s+", 2)[1].trim().toLowerCase()
             : null;
 
-        List<PearlBotConfig.LinkedAccount> linked = PLUGIN_CONFIG.linkedAccounts.entrySet().stream()
+        Map<UUID, PearlBotConfig.LinkedAccount> linked = PLUGIN_CONFIG.linkedAccounts.entrySet().stream()
             .filter(e -> discordUserId.equals(e.getValue().discordUserId))
-            .map(Map.Entry::getValue)
-            .toList();
+            .collect(java.util.stream.Collectors.toMap(
+                Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, java.util.LinkedHashMap::new));
         if (linked.isEmpty()) {
             channel.sendMessage("<@" + discordUserId + "> " + PLUGIN_MESSAGES.discordNoAccountsLinked).queue();
             return;
         }
 
         if (linked.size() > 1 && targetName == null) {
-            String names = linked.stream()
+            String names = linked.values().stream()
                 .map(a -> a.mcUsername != null ? a.mcUsername : "?")
                 .collect(java.util.stream.Collectors.joining(", "));
-            channel.sendMessage("<@" + discordUserId + "> " + PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordMultipleAccounts, "accounts", names, "trigger", triggerWordDiscord())).queue();
+            channel.sendMessage("<@" + discordUserId + "> " + PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordMultipleAccounts, "accounts", names, "trigger", discordTriggerExample())).queue();
             return;
         }
 
         List<String> queued = new java.util.ArrayList<>();
         List<String> noChamber = new java.util.ArrayList<>();
         List<String> alreadyPending = new java.util.ArrayList<>();
-        List<String> notFound = new java.util.ArrayList<>();
-        for (var account : linked) {
+        for (var entry : linked.entrySet()) {
+            var account = entry.getValue();
             if (targetName != null && !targetName.equalsIgnoreCase(account.mcUsername)) continue;
-            UUID mcUuid = lookupMcUuid(account);
-            if (mcUuid == null) continue;
+            UUID mcUuid = entry.getKey();
             PearlBotConfig.StasisChamber chamber = findChamberFor(mcUuid);
             if (chamber == null) {
                 noChamber.add(account.mcUsername);
@@ -305,7 +311,7 @@ public class AutoPearlModule extends Module {
         }
 
         if (targetName != null && queued.isEmpty() && noChamber.isEmpty() && alreadyPending.isEmpty()) {
-            String names = linked.stream()
+            String names = linked.values().stream()
                 .map(a -> a.mcUsername != null ? a.mcUsername : "?")
                 .collect(java.util.stream.Collectors.joining(", "));
             channel.sendMessage("<@" + discordUserId + "> " + PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.discordAccountNotFound, "name", targetName, "accounts", names)).queue();
@@ -320,14 +326,6 @@ public class AutoPearlModule extends Module {
             reply.append(PLUGIN_MESSAGES.discordNothingToPull);
         }
         channel.sendMessage(reply.toString()).queue();
-    }
-
-    private UUID lookupMcUuid(PearlBotConfig.LinkedAccount account) {
-        return PLUGIN_CONFIG.linkedAccounts.entrySet().stream()
-            .filter(e -> e.getValue() == account)
-            .map(Map.Entry::getKey)
-            .findFirst()
-            .orElse(null);
     }
 
     public String newAuthCode(String discordUserId, String discordUsername) {
@@ -458,13 +456,26 @@ public class AutoPearlModule extends Module {
         };
     }
 
-    private String triggerWordIngame() {
-        String w = PLUGIN_CONFIG.triggerWord;
-        return (w == null || w.isBlank()) ? "warp" : w.toLowerCase();
+    private boolean matchesInGameTrigger(String word) {
+        if (PLUGIN_CONFIG.triggerWords.stream().anyMatch(t -> t.equalsIgnoreCase(word))) return true;
+        String prefix = PLUGIN_CONFIG.discordTrigger.prefix;
+        if (prefix == null || prefix.isEmpty()) return false;
+        if (!word.startsWith(prefix.toLowerCase())) return false;
+        String stripped = word.substring(prefix.length());
+        return !stripped.isEmpty() && PLUGIN_CONFIG.triggerWords.stream().anyMatch(t -> t.equalsIgnoreCase(stripped));
     }
 
-    private String triggerWordDiscord() {
-        return "!" + triggerWordIngame();
+    private boolean matchesDiscordTrigger(String word) {
+        String prefix = PLUGIN_CONFIG.discordTrigger.prefix;
+        if (prefix == null) prefix = "";
+        final String p = prefix;
+        return PLUGIN_CONFIG.triggerWords.stream()
+            .anyMatch(t -> (p + t).equalsIgnoreCase(word));
+    }
+
+    private String discordTriggerExample() {
+        String prefix = PLUGIN_CONFIG.discordTrigger.prefix != null ? PLUGIN_CONFIG.discordTrigger.prefix : "!";
+        return prefix + (PLUGIN_CONFIG.triggerWords.isEmpty() ? "warp" : PLUGIN_CONFIG.triggerWords.get(0));
     }
 
     private void sendWhisper(String name, String message) {
@@ -480,7 +491,7 @@ public class AutoPearlModule extends Module {
             .filter(c -> ownerUuid.equals(c.ownerUuid))
             .count();
         if (count <= max) return;
-        String name = resolvePlayerName(ownerUuid);
+        String name = PearlBotPlugin.resolvePlayerName(ownerUuid);
         info("Player {} has {} chamber(s), exceeding max of {}; auto-pulling oldest",
             name != null ? name : ownerUuid, count, max);
         PearlBotConfig.StasisChamber chamber = findChamberFor(ownerUuid);
@@ -489,15 +500,6 @@ public class AutoPearlModule extends Module {
             sendWhisper(name, PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.maxPearlsExceeded, "count", count, "max", max));
         }
         enqueuePull(ownerUuid, name, chamber, "max chambers exceeded");
-    }
-
-    private String resolvePlayerName(UUID uuid) {
-        if (uuid == null) return null;
-        var linked = PLUGIN_CONFIG.linkedAccounts.get(uuid);
-        if (linked != null && linked.mcUsername != null) return linked.mcUsername;
-        return PlayerListsManager.getProfileFromUUID(uuid)
-            .map(p -> p.name())
-            .orElse(null);
     }
 
     private int remainingPearlsFor(UUID ownerUuid) {
@@ -556,8 +558,14 @@ public class AutoPearlModule extends Module {
             } else if (!pearlPresentNear(activePull.blockX, activePull.blockY, activePull.blockZ)) {
                 warn("Chamber for {} at ({}, {}, {}) is empty at the trapdoor; pruning and cancelling instead of clicking",
                     labelOf(activePull), activePull.blockX, activePull.blockY, activePull.blockZ);
-                removeChamberAt(activePull.blockX, activePull.blockY, activePull.blockZ);
+                int cx = activePull.blockX, cy = activePull.blockY, cz = activePull.blockZ;
+                removeChamberAt(cx, cy, cz);
                 abortActivePull(PLUGIN_MESSAGES.chamberEmpty);
+                PLUGIN_CONFIG.pendingPulls.removeIf(p -> {
+                    if (p.blockX != cx || p.blockY != cy || p.blockZ != cz) return false;
+                    if (p.ownerName != null) sendWhisper(p.ownerName, PLUGIN_MESSAGES.chamberEmpty);
+                    return true;
+                });
                 return;
             } else if (isOwnerOnline(activePull.ownerUuid)) {
                 fireClick();
@@ -586,7 +594,9 @@ public class AutoPearlModule extends Module {
         if (now - lastAttemptMs < PULL_RETRY_INTERVAL_MS) return;
         lastAttemptMs = now;
 
-        PearlBotConfig.PendingPull next = PLUGIN_CONFIG.pendingPulls.get(0);
+        var pullsIter = PLUGIN_CONFIG.pendingPulls.iterator();
+        if (!pullsIter.hasNext()) return;
+        PearlBotConfig.PendingPull next = pullsIter.next();
         if (!isChamberInRange(next.blockX, next.blockY, next.blockZ)) {
             debug("Chamber for {} at ({}, {}, {}) is outside loaded chunks; deferring pull",
                 labelOf(next), next.blockX, next.blockY, next.blockZ);
@@ -720,7 +730,6 @@ public class AutoPearlModule extends Module {
         if (activePull != null
             && activePull.blockX == c.x && activePull.blockY == c.y && activePull.blockZ == c.z) {
             abortActivePull(PLUGIN_MESSAGES.chamberEmpty);
-            return;
         }
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> {
             if (p.blockX != c.x || p.blockY != c.y || p.blockZ != c.z) return false;
@@ -778,6 +787,7 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
+        dropReturnPearl();
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
 
@@ -788,6 +798,7 @@ public class AutoPearlModule extends Module {
         if (pull.source != null) pullEmbed.addField("Triggered by", pull.source);
         pullNotification(pullEmbed.successColor(), false);
 
+        // Chamber is still in the map until the entity despawns, so subtract 1 to compensate.
         int remaining = Math.max(0, remainingPearlsFor(pull.ownerUuid) - 1);
         if (pull.ownerName != null) {
             String tail = remaining == 1 ? "1 pearl" : remaining + " pearls";
@@ -797,6 +808,22 @@ public class AutoPearlModule extends Module {
         if (PLUGIN_CONFIG.idleGoal.enabled) {
             idleReturnAtMs = System.currentTimeMillis() + IDLE_RETURN_DELAY_MS;
         }
+    }
+
+    private void dropReturnPearl() {
+        if (!PLUGIN_CONFIG.pearlDrop) return;
+        int slot = InventoryUtil.searchPlayerInventory(
+            stack -> stack != null && stack.getId() == ItemRegistry.ENDER_PEARL.id()
+        );
+        if (slot == -1) {
+            debug("Return pearl enabled but no ender pearls in bot inventory");
+            return;
+        }
+        INVENTORY.submit(InventoryActionRequest.builder()
+            .owner(this)
+            .actions(new DropItem(slot, DropItemAction.DROP_FROM_SELECTED))
+            .priority(3000)
+            .build());
     }
 
     private void sendUseItemOn(int x, int y, int z) {
@@ -810,11 +837,4 @@ public class AutoPearlModule extends Module {
         sendClientPacketAsync(packet);
     }
 
-    public List<PearlBotConfig.PendingPull> pending() {
-        return PLUGIN_CONFIG.pendingPulls;
-    }
-
-    public Map<UUID, PearlBotConfig.StasisChamber> chambers() {
-        return PLUGIN_CONFIG.chambers;
-    }
 }
