@@ -524,7 +524,7 @@ public class PearlBotCommand extends Command {
 
     @Override
     public void defaultEmbed(Embed embed) {
-        if (embed.isDescriptionPresent()) return;
+        if (embed.isTitlePresent() && embed.title().startsWith("Chambers (")) return;
         embed
             .primaryColor()
             .addField("Enabled", toggleStr(PLUGIN_CONFIG.enabled))
