@@ -28,6 +28,7 @@ import org.pearlbot.PearlBotConfig;
 import org.pearlbot.module.AutoPearlModule;
 import org.pearlbot.module.EnderPearlTrackerModule;
 
+import java.util.Map;
 import java.util.UUID;
 
 import static com.mojang.brigadier.arguments.IntegerArgumentType.getInteger;
@@ -80,7 +81,14 @@ public class PearlBotCommand extends Command {
                 "links",
                 "unlink <player>",
                 "maxchambers <count>",
-                "pearldrop <on/off>"
+                "pearldrop <on/off>",
+                "stats",
+                "stats clear",
+                "history <on/off>",
+                "history max <count>",
+                "history",
+                "history <player>",
+                "history clear"
             )
             .aliases("pb")
             .build();
@@ -519,6 +527,135 @@ public class PearlBotCommand extends Command {
                 return OK;
             })));
 
+        builder.then(literal("stats")
+            .executes(c -> {
+                var ps = PLUGIN_CONFIG.playerStats;
+                if (ps.isEmpty()) {
+                    c.getSource().getEmbed().title("No pull stats recorded yet");
+                    return OK;
+                }
+                long totalSuccessful = ps.values().stream().mapToLong(s -> s.successful).sum();
+                long totalAborted = ps.values().stream().mapToLong(s -> s.aborted).sum();
+                String sourceStr = PLUGIN_CONFIG.statsBySource.entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                    .map(e -> e.getKey() + " " + e.getValue())
+                    .collect(java.util.stream.Collectors.joining(", "));
+                StringBuilder players = new StringBuilder();
+                var topPlayers = ps.values().stream()
+                    .sorted((a, b) -> Long.compare(b.successful, a.successful))
+                    .limit(5)
+                    .collect(java.util.stream.Collectors.toList());
+                for (int i = 0; i < topPlayers.size(); i++) {
+                    var s = topPlayers.get(i);
+                    players.append(i + 1).append(". ")
+                        .append(s.playerName != null ? s.playerName : "?")
+                        .append(": ").append(s.successful);
+                    if (s.bySource != null && !s.bySource.isEmpty()) {
+                        String breakdown = s.bySource.entrySet().stream()
+                            .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                            .map(e -> e.getKey() + " " + e.getValue())
+                            .collect(java.util.stream.Collectors.joining(", "));
+                        players.append("  (").append(breakdown).append(")");
+                    }
+                    players.append("\n");
+                }
+                c.getSource().getEmbed()
+                    .title("Pull Stats")
+                    .primaryColor()
+                    .addField("Pulls", totalSuccessful)
+                    .addField("Aborted", totalAborted)
+                    .addField("Sources", sourceStr.isEmpty() ? "-" : sourceStr)
+                    .description(players.toString().trim());
+                return OK;
+            })
+            .then(literal("clear").executes(c -> {
+                int n = PLUGIN_CONFIG.playerStats.size();
+                PLUGIN_CONFIG.playerStats.clear();
+                PLUGIN_CONFIG.statsBySource.clear();
+                c.getSource().getEmbed().title("Pull stats cleared (" + n + " player(s) reset)");
+                return OK;
+            })));
+
+        builder.then(literal("history")
+            .executes(c -> {
+                var h = PLUGIN_CONFIG.pullHistory;
+                if (h.isEmpty()) {
+                    c.getSource().getEmbed().title("No history recorded yet"
+                        + (PLUGIN_CONFIG.historyEnabled ? "" : " (history is off — use 'pb history on')"));
+                    return OK;
+                }
+                int show = Math.min(15, h.size());
+                StringBuilder sb = new StringBuilder();
+                for (int i = h.size() - 1; i >= h.size() - show; i--) {
+                    var r = h.get(i);
+                    String time = java.time.Instant.ofEpochMilli(r.completedAtMs)
+                        .atZone(java.time.ZoneOffset.UTC)
+                        .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                    sb.append(r.ownerName != null ? r.ownerName : "?").append("  ")
+                        .append(r.source != null ? r.source : "?").append("  ")
+                        .append(time);
+                    if (!r.success) sb.append("  (aborted)");
+                    sb.append("\n");
+                }
+                c.getSource().getEmbed()
+                    .title("Recent History")
+                    .primaryColor()
+                    .description(sb.toString().trim());
+                return OK;
+            })
+            .then(argument("toggle", toggle()).executes(c -> {
+                PLUGIN_CONFIG.historyEnabled = getToggle(c, "toggle");
+                c.getSource().getEmbed().title("Pull history " + toggleStrCaps(PLUGIN_CONFIG.historyEnabled)
+                    + " (max: " + PLUGIN_CONFIG.historyMax + ")");
+                return OK;
+            }))
+            .then(literal("max")
+                .then(argument("count", integer(1)).executes(c -> {
+                    PLUGIN_CONFIG.historyMax = getInteger(c, "count");
+                    int excess = PLUGIN_CONFIG.pullHistory.size() - PLUGIN_CONFIG.historyMax;
+                    if (excess > 0)
+                        PLUGIN_CONFIG.pullHistory.subList(0, excess).clear();
+                    c.getSource().getEmbed().title("History max set to " + PLUGIN_CONFIG.historyMax);
+                    return OK;
+                })))
+            .then(literal("clear").executes(c -> {
+                int n = PLUGIN_CONFIG.pullHistory.size();
+                PLUGIN_CONFIG.pullHistory.clear();
+                c.getSource().getEmbed().title("History cleared (" + n + " records removed)");
+                return OK;
+            }))
+            .then(argument("playerName", wordWithChars()).executes(c -> {
+                String name = getString(c, "playerName");
+                var filtered = PLUGIN_CONFIG.pullHistory.stream()
+                    .filter(r -> r.ownerName != null && r.ownerName.equalsIgnoreCase(name))
+                    .collect(java.util.stream.Collectors.toList());
+                if (filtered.isEmpty()) {
+                    c.getSource().getEmbed().title("No history for " + name);
+                    return OK;
+                }
+                int show = Math.min(15, filtered.size());
+                StringBuilder sb = new StringBuilder();
+                for (int i = filtered.size() - 1; i >= filtered.size() - show; i--) {
+                    var r = filtered.get(i);
+                    String time = java.time.Instant.ofEpochMilli(r.completedAtMs)
+                        .atZone(java.time.ZoneOffset.UTC)
+                        .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                    sb.append(r.source != null ? r.source : "?").append("  ").append(time);
+                    if (!r.success) sb.append("  (aborted)");
+                    sb.append("\n");
+                }
+                // also show lifetime total from playerStats if available
+                var lifetime = PLUGIN_CONFIG.playerStats.values().stream()
+                    .filter(s -> name.equalsIgnoreCase(s.playerName))
+                    .findFirst();
+                String titleSuffix = lifetime.map(s -> " — " + s.successful + " total").orElse("");
+                c.getSource().getEmbed()
+                    .title("History: " + name + titleSuffix)
+                    .primaryColor()
+                    .description(sb.toString().trim());
+                return OK;
+            })));
+
         return builder;
     }
 
@@ -546,7 +683,10 @@ public class PearlBotCommand extends Command {
             .addField("Max Chambers Per Player", PLUGIN_CONFIG.maxChambersPerPlayer == 0
                 ? "unlimited" : String.valueOf(PLUGIN_CONFIG.maxChambersPerPlayer))
             .addField("Notifications", PLUGIN_CONFIG.notificationLevel.name().toLowerCase())
-            .addField("Pearl Drop", toggleStr(PLUGIN_CONFIG.pearlDrop));
+            .addField("Pearl Drop", toggleStr(PLUGIN_CONFIG.pearlDrop))
+            .addField("Total Pulls", PLUGIN_CONFIG.playerStats.values().stream().mapToLong(s -> s.successful).sum())
+            .addField("History", PLUGIN_CONFIG.historyEnabled
+                ? "on (" + PLUGIN_CONFIG.pullHistory.size() + "/" + PLUGIN_CONFIG.historyMax + ")" : "off");
     }
 
     private static final java.net.http.HttpClient MOJANG_HTTP = java.net.http.HttpClient.newBuilder()

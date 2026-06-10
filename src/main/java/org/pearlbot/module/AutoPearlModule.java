@@ -625,6 +625,7 @@ public class AutoPearlModule extends Module {
         if (pull == null) return;
 
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
+        recordPull(pull, false);
         pullNotification(Embed.builder()
             .title("Pearl Pull Cancelled")
             .addField("Owner", labelOf(pull))
@@ -790,6 +791,7 @@ public class AutoPearlModule extends Module {
         dropReturnPearl();
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
+        recordPull(pull, true);
 
         var pullEmbed = Embed.builder()
             .title("Pearl Pulled")
@@ -807,6 +809,43 @@ public class AutoPearlModule extends Module {
 
         if (PLUGIN_CONFIG.idleGoal.enabled) {
             idleReturnAtMs = System.currentTimeMillis() + IDLE_RETURN_DELAY_MS;
+        }
+    }
+
+    private static String normalizeSource(String source) {
+        if (source == null) return "manual";
+        return switch (source) {
+            case "in-game whisper" -> "whisper";
+            case "public chat" -> "chat";
+            case "max chambers exceeded" -> "auto";
+            default -> "discord";
+        };
+    }
+
+    private void recordPull(PearlBotConfig.PendingPull pull, boolean success) {
+        String source = normalizeSource(pull.source);
+        if (pull.ownerUuid != null) {
+            var ps = PLUGIN_CONFIG.playerStats.computeIfAbsent(
+                pull.ownerUuid, k -> new PearlBotConfig.PlayerPullStats(pull.ownerName));
+            if (pull.ownerName != null) ps.playerName = pull.ownerName;
+            if (success) {
+                ps.successful++;
+                if (ps.bySource == null) ps.bySource = new java.util.LinkedHashMap<>();
+                ps.bySource.merge(source, 1L, Long::sum);
+            } else {
+                ps.aborted++;
+            }
+        }
+        if (success) {
+            PLUGIN_CONFIG.statsBySource.merge(source, 1L, Long::sum);
+        }
+        if (PLUGIN_CONFIG.historyEnabled) {
+            PLUGIN_CONFIG.pullHistory.add(new PearlBotConfig.PullRecord(
+                pull.ownerName, pull.ownerUuid, pull.source,
+                pull.queuedAtMs, System.currentTimeMillis(), success));
+            int excess = PLUGIN_CONFIG.pullHistory.size() - PLUGIN_CONFIG.historyMax;
+            if (excess > 0)
+                PLUGIN_CONFIG.pullHistory.subList(0, excess).clear();
         }
     }
 
