@@ -795,13 +795,14 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
-        if (PLUGIN_CONFIG.reopenTrapdoor) {
+        if (PLUGIN_CONFIG.reopenTrapdoors) {
             int capTx = tx, capTy = ty, capTz = tz;
+            long delay = PLUGIN_CONFIG.reopenTrapdoorsDelayMs;
             java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
-                    Thread.sleep(250);
+                    Thread.sleep(delay);
                     sendUseItemOn(capTx, capTy, capTz);
-                    Thread.sleep(250);
+                    Thread.sleep(delay);
                     openUpperTrapdoorIfClosed(capTx, capTy, capTz);
                 } catch (InterruptedException ignored) {}
             });

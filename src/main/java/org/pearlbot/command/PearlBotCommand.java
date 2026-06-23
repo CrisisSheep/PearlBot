@@ -84,7 +84,8 @@ public class PearlBotCommand extends Command {
                 "unlink <player>",
                 "maxchambers <count>",
                 "pearldrop <on/off>",
-                "reopentrapdoor <on/off>",
+                "reopentrapdoors <on/off>",
+                "reopentrapdoors delay <ms>",
                 "stats",
                 "stats clear",
                 "history <on/off>",
@@ -530,12 +531,18 @@ public class PearlBotCommand extends Command {
                 return OK;
             })));
 
-        builder.then(literal("reopentrapdoor")
+        builder.then(literal("reopentrapdoors")
             .then(argument("toggle", toggle()).executes(c -> {
-                PLUGIN_CONFIG.reopenTrapdoor = getToggle(c, "toggle");
-                c.getSource().getEmbed().title("Reopen trapdoor " + toggleStrCaps(PLUGIN_CONFIG.reopenTrapdoor));
+                PLUGIN_CONFIG.reopenTrapdoors = getToggle(c, "toggle");
+                c.getSource().getEmbed().title("Reopen trapdoors " + toggleStrCaps(PLUGIN_CONFIG.reopenTrapdoors));
                 return OK;
-            })));
+            }))
+            .then(literal("delay")
+                .then(argument("ms", integer(0)).executes(c -> {
+                    PLUGIN_CONFIG.reopenTrapdoorsDelayMs = getInteger(c, "ms");
+                    c.getSource().getEmbed().title("Reopen trapdoors delay set to " + PLUGIN_CONFIG.reopenTrapdoorsDelayMs + "ms");
+                    return OK;
+                }))));
 
         builder.then(literal("stats")
             .executes(c -> {
@@ -724,7 +731,8 @@ public class PearlBotCommand extends Command {
                 ? "unlimited" : String.valueOf(PLUGIN_CONFIG.maxChambersPerPlayer))
             .addField("Notifications", PLUGIN_CONFIG.notificationLevel.name().toLowerCase())
             .addField("Pearl Drop", toggleStr(PLUGIN_CONFIG.pearlDrop))
-            .addField("Reopen Trapdoor", toggleStr(PLUGIN_CONFIG.reopenTrapdoor))
+            .addField("Reopen Trapdoors", PLUGIN_CONFIG.reopenTrapdoors
+                ? "on (" + PLUGIN_CONFIG.reopenTrapdoorsDelayMs + "ms)" : "off")
             .addField("Total Pulls", PLUGIN_CONFIG.playerStats.values().stream().mapToLong(s -> s.successful).sum())
             .addField("History", PLUGIN_CONFIG.historyEnabled
                 ? "on (" + PLUGIN_CONFIG.pullHistory.size() + "/" + PLUGIN_CONFIG.historyMax + ")" : "off");
