@@ -95,6 +95,45 @@ public class PearlBotConfig {
         }
     }
 
+    public Map<UUID, PlayerPullStats> playerStats = new LinkedHashMap<>();
+    public Map<String, Long> statsBySource = new LinkedHashMap<>();
+
+    public static class PlayerPullStats {
+        public String playerName;
+        public long successful;
+        public long aborted;
+        public Map<String, Long> bySource = new LinkedHashMap<>();
+
+        public PlayerPullStats() {}
+        public PlayerPullStats(String playerName) {
+            this.playerName = playerName;
+        }
+    }
+
+    public boolean historyEnabled = false;
+    public int historyMax = 50;
+    public List<PullRecord> pullHistory = new ArrayList<>();
+
+    public static class PullRecord {
+        public String ownerName;
+        public UUID ownerUuid;
+        public String source;
+        public long requestedAtMs;
+        public long completedAtMs;
+        public boolean success;
+
+        public PullRecord() {}
+        public PullRecord(String ownerName, UUID ownerUuid, String source,
+                          long requestedAtMs, long completedAtMs, boolean success) {
+            this.ownerName = ownerName;
+            this.ownerUuid = ownerUuid;
+            this.source = source;
+            this.requestedAtMs = requestedAtMs;
+            this.completedAtMs = completedAtMs;
+            this.success = success;
+        }
+    }
+
     public List<PendingPull> pendingPulls = new ArrayList<>();
     public static class PendingPull {
         public UUID ownerUuid;
