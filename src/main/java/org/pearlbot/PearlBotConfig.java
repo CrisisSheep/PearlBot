@@ -30,6 +30,7 @@ public class PearlBotConfig {
 
     public boolean enabled = true;
     public boolean pearlDrop = false;
+    public boolean reopenTrapdoor = false;
     public List<String> triggerWords = new ArrayList<>(java.util.List.of("warp"));
     public int pearlViewDistance = 64;
     public int trapdoorScanRadius = 5;

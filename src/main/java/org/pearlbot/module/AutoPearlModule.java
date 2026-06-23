@@ -791,6 +791,7 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
+        if (PLUGIN_CONFIG.reopenTrapdoor) sendUseItemOn(tx, ty, tz);
         dropReturnPearl(tx, ty, tz);
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();

@@ -84,6 +84,7 @@ public class PearlBotCommand extends Command {
                 "unlink <player>",
                 "maxchambers <count>",
                 "pearldrop <on/off>",
+                "reopentrapdoor <on/off>",
                 "stats",
                 "stats clear",
                 "history <on/off>",
@@ -529,6 +530,13 @@ public class PearlBotCommand extends Command {
                 return OK;
             })));
 
+        builder.then(literal("reopentrapdoor")
+            .then(argument("toggle", toggle()).executes(c -> {
+                PLUGIN_CONFIG.reopenTrapdoor = getToggle(c, "toggle");
+                c.getSource().getEmbed().title("Reopen trapdoor " + toggleStrCaps(PLUGIN_CONFIG.reopenTrapdoor));
+                return OK;
+            })));
+
         builder.then(literal("stats")
             .executes(c -> {
                 var ps = PLUGIN_CONFIG.playerStats;
@@ -716,6 +724,7 @@ public class PearlBotCommand extends Command {
                 ? "unlimited" : String.valueOf(PLUGIN_CONFIG.maxChambersPerPlayer))
             .addField("Notifications", PLUGIN_CONFIG.notificationLevel.name().toLowerCase())
             .addField("Pearl Drop", toggleStr(PLUGIN_CONFIG.pearlDrop))
+            .addField("Reopen Trapdoor", toggleStr(PLUGIN_CONFIG.reopenTrapdoor))
             .addField("Total Pulls", PLUGIN_CONFIG.playerStats.values().stream().mapToLong(s -> s.successful).sum())
             .addField("History", PLUGIN_CONFIG.historyEnabled
                 ? "on (" + PLUGIN_CONFIG.pullHistory.size() + "/" + PLUGIN_CONFIG.historyMax + ")" : "off");
