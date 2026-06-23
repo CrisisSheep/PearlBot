@@ -795,7 +795,17 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
-        if (PLUGIN_CONFIG.reopenTrapdoor) openUpperTrapdoorIfClosed(tx, ty, tz);
+        if (PLUGIN_CONFIG.reopenTrapdoor) {
+            int capTx = tx, capTy = ty, capTz = tz;
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    Thread.sleep(250);
+                    sendUseItemOn(capTx, capTy, capTz);
+                    Thread.sleep(250);
+                    openUpperTrapdoorIfClosed(capTx, capTy, capTz);
+                } catch (InterruptedException ignored) {}
+            });
+        }
         dropReturnPearl(tx, ty, tz);
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
