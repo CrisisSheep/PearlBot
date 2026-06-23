@@ -30,6 +30,9 @@ import com.zenith.feature.inventory.util.InventoryUtil;
 import com.zenith.feature.pathfinder.goals.GoalNear;
 import com.zenith.feature.whitelist.PlayerListsManager;
 import com.zenith.mc.block.BlockPos;
+import com.zenith.mc.block.BlockState;
+import com.zenith.mc.block.properties.Half;
+import com.zenith.mc.block.properties.api.BlockStateProperties;
 import com.zenith.mc.item.ItemRegistry;
 import com.zenith.module.api.Module;
 import com.zenith.util.ChatUtil;
@@ -49,11 +52,15 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
+import com.zenith.feature.player.InputRequest;
+import com.zenith.feature.player.RotationHelper;
 import static com.github.rfresh2.EventConsumer.of;
 import static com.zenith.Globals.BARITONE;
+import static com.zenith.Globals.BLOCK_DATA;
 import static com.zenith.Globals.CACHE;
 import static com.zenith.Globals.CONFIG;
 import static com.zenith.Globals.DISCORD;
+import static com.zenith.Globals.INPUTS;
 import static com.zenith.Globals.INVENTORY;
 import static com.zenith.Globals.PLAYER_LISTS;
 import org.pearlbot.PearlBotPlugin;
@@ -788,7 +795,19 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
-        dropReturnPearl();
+        if (PLUGIN_CONFIG.reopenTrapdoors) {
+            int capTx = tx, capTy = ty, capTz = tz;
+            long delay = PLUGIN_CONFIG.reopenTrapdoorsDelayMs;
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    Thread.sleep(delay);
+                    sendUseItemOn(capTx, capTy, capTz);
+                    Thread.sleep(delay);
+                    openUpperTrapdoorIfClosed(capTx, capTy, capTz);
+                } catch (InterruptedException ignored) {}
+            });
+        }
+        dropReturnPearl(tx, ty, tz);
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
         recordPull(pull, true);
@@ -849,7 +868,7 @@ public class AutoPearlModule extends Module {
         }
     }
 
-    private void dropReturnPearl() {
+    private void dropReturnPearl(int tx, int ty, int tz) {
         if (!PLUGIN_CONFIG.pearlDrop) return;
         int slot = InventoryUtil.searchPlayerInventory(
             stack -> stack != null && stack.getId() == ItemRegistry.ENDER_PEARL.id()
@@ -858,11 +877,35 @@ public class AutoPearlModule extends Module {
             debug("Return pearl enabled but no ender pearls in bot inventory");
             return;
         }
+        var rotation = RotationHelper.rotationTo(tx + 0.5, ty, tz + 0.5);
+        INPUTS.submit(InputRequest.builder()
+            .owner(this)
+            .yaw(rotation.getX())
+            .pitch(rotation.getY())
+            .priority(3000)
+            .build());
         INVENTORY.submit(InventoryActionRequest.builder()
             .owner(this)
             .actions(new DropItem(slot, DropItemAction.DROP_FROM_SELECTED))
             .priority(3000)
             .build());
+    }
+
+    private void openUpperTrapdoorIfClosed(int tx, int ty, int tz) {
+        var chunkCache = CACHE.getChunkCache();
+        if (chunkCache == null) return;
+        var section = chunkCache.getChunkSection(tx, ty + 1, tz);
+        if (section == null) return;
+        int stateId = section.getBlock(tx & 15, (ty + 1) & 15, tz & 15);
+        if (stateId == 0) return;
+        var block = BLOCK_DATA.getBlockDataFromBlockStateId(stateId);
+        if (block == null || !block.name().endsWith("_trapdoor")) return;
+        var state = new BlockState(block, stateId, tx, ty + 1, tz);
+        if (!state.hasProperty(BlockStateProperties.HALF) || !state.hasProperty(BlockStateProperties.OPEN)) return;
+        if (Half.BOTTOM.equals(state.getProperty(BlockStateProperties.HALF))
+                && Boolean.FALSE.equals(state.getProperty(BlockStateProperties.OPEN))) {
+            sendUseItemOn(tx, ty + 1, tz);
+        }
     }
 
     private void sendUseItemOn(int x, int y, int z) {

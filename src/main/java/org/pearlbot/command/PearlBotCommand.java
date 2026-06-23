@@ -18,6 +18,8 @@
 package org.pearlbot.command;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.tree.CommandNode;
 import com.zenith.command.api.Command;
 import com.zenith.command.api.CommandCategory;
 import com.zenith.command.api.CommandContext;
@@ -82,6 +84,8 @@ public class PearlBotCommand extends Command {
                 "unlink <player>",
                 "maxchambers <count>",
                 "pearldrop <on/off>",
+                "reopentrapdoors <on/off>",
+                "reopentrapdoors delay <ms>",
                 "stats",
                 "stats clear",
                 "history <on/off>",
@@ -527,6 +531,19 @@ public class PearlBotCommand extends Command {
                 return OK;
             })));
 
+        builder.then(literal("reopentrapdoors")
+            .then(argument("toggle", toggle()).executes(c -> {
+                PLUGIN_CONFIG.reopenTrapdoors = getToggle(c, "toggle");
+                c.getSource().getEmbed().title("Reopen trapdoors " + toggleStrCaps(PLUGIN_CONFIG.reopenTrapdoors));
+                return OK;
+            }))
+            .then(literal("delay")
+                .then(argument("ms", integer(0)).executes(c -> {
+                    PLUGIN_CONFIG.reopenTrapdoorsDelayMs = getInteger(c, "ms");
+                    c.getSource().getEmbed().title("Reopen trapdoors delay set to " + PLUGIN_CONFIG.reopenTrapdoorsDelayMs + "ms");
+                    return OK;
+                }))));
+
         builder.then(literal("stats")
             .executes(c -> {
                 var ps = PLUGIN_CONFIG.playerStats;
@@ -660,7 +677,37 @@ public class PearlBotCommand extends Command {
     }
 
     @Override
+    public void defaultErrorHandler(Map<CommandNode<CommandContext>, CommandSyntaxException> exceptions, CommandContext context) {
+        for (var ex : exceptions.values())
+            context.getEmbed().addField("Error", ex.getMessage());
+        defaultEmbed(context.getEmbed());
+        if (!context.getEmbed().isTitlePresent())
+            context.getEmbed().title("Invalid command usage");
+        String prefix = context.getSource().commandPrefix() + commandUsage().getName() + " ";
+        var lines = commandUsage().getUsageLines();
+        var chunks = new java.util.ArrayList<StringBuilder>();
+        var current = new StringBuilder();
+        for (var line : lines) {
+            String entry = prefix + line + "\n";
+            if (current.length() + entry.length() > 1024) {
+                chunks.add(current);
+                current = new StringBuilder();
+            }
+            current.append(entry);
+        }
+        if (!current.isEmpty()) chunks.add(current);
+        if (chunks.size() == 1) {
+            context.getEmbed().addField("Usage", chunks.get(0).toString().trim());
+        } else {
+            for (int i = 0; i < chunks.size(); i++)
+                context.getEmbed().addField("Usage (" + (i + 1) + "/" + chunks.size() + ")", chunks.get(i).toString().trim());
+        }
+        context.getEmbed().errorColor();
+    }
+
+    @Override
     public void defaultEmbed(Embed embed) {
+        if (embed.isTitlePresent() && embed.title().startsWith("Chambers (")) return;
         embed
             .primaryColor()
             .addField("Enabled", toggleStr(PLUGIN_CONFIG.enabled))
@@ -684,6 +731,8 @@ public class PearlBotCommand extends Command {
                 ? "unlimited" : String.valueOf(PLUGIN_CONFIG.maxChambersPerPlayer))
             .addField("Notifications", PLUGIN_CONFIG.notificationLevel.name().toLowerCase())
             .addField("Pearl Drop", toggleStr(PLUGIN_CONFIG.pearlDrop))
+            .addField("Reopen Trapdoors", PLUGIN_CONFIG.reopenTrapdoors
+                ? "on (" + PLUGIN_CONFIG.reopenTrapdoorsDelayMs + "ms)" : "off")
             .addField("Total Pulls", PLUGIN_CONFIG.playerStats.values().stream().mapToLong(s -> s.successful).sum())
             .addField("History", PLUGIN_CONFIG.historyEnabled
                 ? "on (" + PLUGIN_CONFIG.pullHistory.size() + "/" + PLUGIN_CONFIG.historyMax + ")" : "off");
