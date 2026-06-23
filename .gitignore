@@ -36,3 +36,6 @@ dataGenerator/run
 
 # Ignore Gradle build output directory
 build
+
+# Project guide (local only)
+CLAUDE.md

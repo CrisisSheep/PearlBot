@@ -49,11 +49,14 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
+import com.zenith.feature.player.InputRequest;
+import com.zenith.feature.player.RotationHelper;
 import static com.github.rfresh2.EventConsumer.of;
 import static com.zenith.Globals.BARITONE;
 import static com.zenith.Globals.CACHE;
 import static com.zenith.Globals.CONFIG;
 import static com.zenith.Globals.DISCORD;
+import static com.zenith.Globals.INPUTS;
 import static com.zenith.Globals.INVENTORY;
 import static com.zenith.Globals.PLAYER_LISTS;
 import org.pearlbot.PearlBotPlugin;
@@ -788,7 +791,7 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
-        dropReturnPearl();
+        dropReturnPearl(tx, ty, tz);
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
         recordPull(pull, true);
@@ -849,7 +852,7 @@ public class AutoPearlModule extends Module {
         }
     }
 
-    private void dropReturnPearl() {
+    private void dropReturnPearl(int tx, int ty, int tz) {
         if (!PLUGIN_CONFIG.pearlDrop) return;
         int slot = InventoryUtil.searchPlayerInventory(
             stack -> stack != null && stack.getId() == ItemRegistry.ENDER_PEARL.id()
@@ -858,6 +861,13 @@ public class AutoPearlModule extends Module {
             debug("Return pearl enabled but no ender pearls in bot inventory");
             return;
         }
+        var rotation = RotationHelper.rotationTo(tx + 0.5, ty, tz + 0.5);
+        INPUTS.submit(InputRequest.builder()
+            .owner(this)
+            .yaw(rotation.getX())
+            .pitch(rotation.getY())
+            .priority(3000)
+            .build());
         INVENTORY.submit(InventoryActionRequest.builder()
             .owner(this)
             .actions(new DropItem(slot, DropItemAction.DROP_FROM_SELECTED))
