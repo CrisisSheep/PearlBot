@@ -18,6 +18,8 @@
 package org.pearlbot.command;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.tree.CommandNode;
 import com.zenith.command.api.Command;
 import com.zenith.command.api.CommandCategory;
 import com.zenith.command.api.CommandContext;
@@ -657,6 +659,35 @@ public class PearlBotCommand extends Command {
             })));
 
         return builder;
+    }
+
+    @Override
+    public void defaultErrorHandler(Map<CommandNode<CommandContext>, CommandSyntaxException> exceptions, CommandContext context) {
+        for (var ex : exceptions.values())
+            context.getEmbed().addField("Error", ex.getMessage());
+        defaultEmbed(context.getEmbed());
+        if (!context.getEmbed().isTitlePresent())
+            context.getEmbed().title("Invalid command usage");
+        String prefix = context.getSource().commandPrefix() + commandUsage().getName() + " ";
+        var lines = commandUsage().getUsageLines();
+        var chunks = new java.util.ArrayList<StringBuilder>();
+        var current = new StringBuilder();
+        for (var line : lines) {
+            String entry = prefix + line + "\n";
+            if (current.length() + entry.length() > 1024) {
+                chunks.add(current);
+                current = new StringBuilder();
+            }
+            current.append(entry);
+        }
+        if (!current.isEmpty()) chunks.add(current);
+        if (chunks.size() == 1) {
+            context.getEmbed().addField("Usage", chunks.get(0).toString().trim());
+        } else {
+            for (int i = 0; i < chunks.size(); i++)
+                context.getEmbed().addField("Usage (" + (i + 1) + "/" + chunks.size() + ")", chunks.get(i).toString().trim());
+        }
+        context.getEmbed().errorColor();
     }
 
     @Override
