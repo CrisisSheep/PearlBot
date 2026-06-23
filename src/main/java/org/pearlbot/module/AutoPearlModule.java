@@ -30,6 +30,9 @@ import com.zenith.feature.inventory.util.InventoryUtil;
 import com.zenith.feature.pathfinder.goals.GoalNear;
 import com.zenith.feature.whitelist.PlayerListsManager;
 import com.zenith.mc.block.BlockPos;
+import com.zenith.mc.block.BlockState;
+import com.zenith.mc.block.properties.Half;
+import com.zenith.mc.block.properties.api.BlockStateProperties;
 import com.zenith.mc.item.ItemRegistry;
 import com.zenith.module.api.Module;
 import com.zenith.util.ChatUtil;
@@ -53,6 +56,7 @@ import com.zenith.feature.player.InputRequest;
 import com.zenith.feature.player.RotationHelper;
 import static com.github.rfresh2.EventConsumer.of;
 import static com.zenith.Globals.BARITONE;
+import static com.zenith.Globals.BLOCK_DATA;
 import static com.zenith.Globals.CACHE;
 import static com.zenith.Globals.CONFIG;
 import static com.zenith.Globals.DISCORD;
@@ -791,7 +795,7 @@ public class AutoPearlModule extends Module {
         String label = labelOf(pull);
 
         sendUseItemOn(tx, ty, tz);
-        if (PLUGIN_CONFIG.reopenTrapdoor) sendUseItemOn(tx, ty, tz);
+        if (PLUGIN_CONFIG.reopenTrapdoor) openUpperTrapdoorIfClosed(tx, ty, tz);
         dropReturnPearl(tx, ty, tz);
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
         clearActivePullState();
@@ -874,6 +878,23 @@ public class AutoPearlModule extends Module {
             .actions(new DropItem(slot, DropItemAction.DROP_FROM_SELECTED))
             .priority(3000)
             .build());
+    }
+
+    private void openUpperTrapdoorIfClosed(int tx, int ty, int tz) {
+        var chunkCache = CACHE.getChunkCache();
+        if (chunkCache == null) return;
+        var section = chunkCache.getChunkSection(tx, ty + 1, tz);
+        if (section == null) return;
+        int stateId = section.getBlock(tx & 15, (ty + 1) & 15, tz & 15);
+        if (stateId == 0) return;
+        var block = BLOCK_DATA.getBlockDataFromBlockStateId(stateId);
+        if (block == null || !block.name().endsWith("_trapdoor")) return;
+        var state = new BlockState(block, stateId, tx, ty + 1, tz);
+        if (!state.hasProperty(BlockStateProperties.HALF) || !state.hasProperty(BlockStateProperties.OPEN)) return;
+        if (Half.BOTTOM.equals(state.getProperty(BlockStateProperties.HALF))
+                && Boolean.FALSE.equals(state.getProperty(BlockStateProperties.OPEN))) {
+            sendUseItemOn(tx, ty + 1, tz);
+        }
     }
 
     private void sendUseItemOn(int x, int y, int z) {
