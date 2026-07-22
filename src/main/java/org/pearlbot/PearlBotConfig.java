@@ -104,7 +104,7 @@ public class PearlBotConfig {
         public String playerName;
         public long successful;
         public long aborted;
-        public Map<String, Long> bySource = new LinkedHashMap<>();
+        public Map<String, Long> bySource = new java.util.concurrent.ConcurrentHashMap<>();
 
         public PlayerPullStats() {}
         public PlayerPullStats(String playerName) {

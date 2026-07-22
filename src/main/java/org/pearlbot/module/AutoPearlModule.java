@@ -503,7 +503,7 @@ public class AutoPearlModule extends Module {
             .count();
         if (count <= max) return;
         String name = PearlBotPlugin.resolvePlayerName(ownerUuid);
-        info("Player {} has {} chamber(s), exceeding max of {}; auto-pulling oldest",
+        info("Player {} has {} chamber(s), exceeding max of {}; auto-pulling pearl",
             name != null ? name : ownerUuid, count, max);
         PearlBotConfig.StasisChamber chamber = findChamberFor(ownerUuid);
         if (chamber == null) return;
@@ -849,7 +849,7 @@ public class AutoPearlModule extends Module {
             if (pull.ownerName != null) ps.playerName = pull.ownerName;
             if (success) {
                 ps.successful++;
-                if (ps.bySource == null) ps.bySource = new java.util.LinkedHashMap<>();
+                if (ps.bySource == null) ps.bySource = new java.util.concurrent.ConcurrentHashMap<>();
                 ps.bySource.merge(source, 1L, Long::sum);
             } else {
                 ps.aborted++;
