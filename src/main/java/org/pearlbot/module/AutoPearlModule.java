@@ -90,6 +90,10 @@ public class AutoPearlModule extends Module {
     private volatile long readyAtMs = 0L;
     private long idleReturnAtMs = 0L;
 
+    private int reopenStep = 0;
+    private long reopenAtMs = 0L;
+    private int reopenTx, reopenTy, reopenTz;
+
     private final Map<UUID, Long> chamberEmptySinceMs = new HashMap<>();
 
     private final Map<String, PendingAuth> pendingAuthCodes = new ConcurrentHashMap<>();
@@ -551,6 +555,7 @@ public class AutoPearlModule extends Module {
         if (!jdaListenerRegistered) registerJdaListener();
 
         pruneGhostChambers();
+        tickReopenTrapdoor();
 
         long now = System.currentTimeMillis();
         if (activePull != null) {
@@ -796,16 +801,11 @@ public class AutoPearlModule extends Module {
 
         sendUseItemOn(tx, ty, tz);
         if (PLUGIN_CONFIG.reopenTrapdoors) {
-            int capTx = tx, capTy = ty, capTz = tz;
-            long delay = PLUGIN_CONFIG.reopenTrapdoorsDelayMs;
-            java.util.concurrent.CompletableFuture.runAsync(() -> {
-                try {
-                    Thread.sleep(delay);
-                    sendUseItemOn(capTx, capTy, capTz);
-                    Thread.sleep(delay);
-                    openUpperTrapdoorIfClosed(capTx, capTy, capTz);
-                } catch (InterruptedException ignored) {}
-            });
+            reopenTx = tx;
+            reopenTy = ty;
+            reopenTz = tz;
+            reopenStep = 1;
+            reopenAtMs = System.currentTimeMillis() + PLUGIN_CONFIG.reopenTrapdoorsDelayMs;
         }
         dropReturnPearl(tx, ty, tz);
         PLUGIN_CONFIG.pendingPulls.removeIf(p -> pull.ownerUuid.equals(p.ownerUuid));
@@ -889,6 +889,18 @@ public class AutoPearlModule extends Module {
             .actions(new DropItem(slot, DropItemAction.DROP_FROM_SELECTED))
             .priority(3000)
             .build());
+    }
+
+    private void tickReopenTrapdoor() {
+        if (reopenStep == 0 || System.currentTimeMillis() < reopenAtMs) return;
+        if (reopenStep == 1) {
+            sendUseItemOn(reopenTx, reopenTy, reopenTz);
+            reopenStep = 2;
+            reopenAtMs = System.currentTimeMillis() + PLUGIN_CONFIG.reopenTrapdoorsDelayMs;
+        } else {
+            openUpperTrapdoorIfClosed(reopenTx, reopenTy, reopenTz);
+            reopenStep = 0;
+        }
     }
 
     private void openUpperTrapdoorIfClosed(int tx, int ty, int tz) {
