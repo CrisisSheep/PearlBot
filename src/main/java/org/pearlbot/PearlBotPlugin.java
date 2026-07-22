@@ -33,7 +33,7 @@ import java.util.UUID;
     version = BuildConstants.VERSION,
     description = "Stasis chamber detection and pulling, with chat + Discord triggers",
     url = "",
-    authors = {"Leonetic"},
+    authors = {"Leonetic, CrisisSheep & pawstar"},
     mcVersions = {BuildConstants.MC_VERSION}
 )
 public class PearlBotPlugin implements ZenithProxyPlugin {
