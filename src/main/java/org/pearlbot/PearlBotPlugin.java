@@ -52,6 +52,13 @@ public class PearlBotPlugin implements ZenithProxyPlugin {
         PLUGIN_CONFIG.linkedAccounts = new java.util.concurrent.ConcurrentHashMap<>(PLUGIN_CONFIG.linkedAccounts);
         PLUGIN_CONFIG.pendingPulls = new java.util.concurrent.CopyOnWriteArrayList<>(PLUGIN_CONFIG.pendingPulls);
         PLUGIN_CONFIG.triggerWords = new java.util.concurrent.CopyOnWriteArrayList<>(PLUGIN_CONFIG.triggerWords);
+        PLUGIN_CONFIG.whitelistedPlayers = new java.util.concurrent.ConcurrentHashMap<>(PLUGIN_CONFIG.whitelistedPlayers);
+        PLUGIN_CONFIG.playerStats = new java.util.concurrent.ConcurrentHashMap<>(PLUGIN_CONFIG.playerStats);
+        for (var ps : PLUGIN_CONFIG.playerStats.values()) {
+            if (ps.bySource != null) ps.bySource = new java.util.concurrent.ConcurrentHashMap<>(ps.bySource);
+        }
+        PLUGIN_CONFIG.statsBySource = new java.util.concurrent.ConcurrentHashMap<>(PLUGIN_CONFIG.statsBySource);
+        PLUGIN_CONFIG.pullHistory = new java.util.concurrent.CopyOnWriteArrayList<>(PLUGIN_CONFIG.pullHistory);
         PLUGIN_MESSAGES = API.registerConfig(BuildConstants.PLUGIN_ID + "-messages", PearlBotMessages.class);
         API.registerModule(new EnderPearlTrackerModule());
         API.registerModule(new AutoPearlModule());
