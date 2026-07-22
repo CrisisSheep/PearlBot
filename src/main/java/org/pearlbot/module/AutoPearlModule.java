@@ -72,6 +72,8 @@ public class AutoPearlModule extends Module {
     private static final long PULL_RETRY_INTERVAL_MS = 1_000L;
     private static final long IDLE_RETURN_DELAY_MS = 1500L;
     private static final long GHOST_PRUNE_GRACE_MS = 5_000L;
+    private static final long CLICK_CONFIRM_TIMEOUT_MS = 3_000L;
+    private static final int FACE_TRAPDOOR_PRIORITY = 3000;
     private static final String DISCORD_AUTH_CMD = "!auth";
     private static final String INGAME_AUTH_CMD = "!auth";
     private static final String INGAME_LIST_CMD = "list";
@@ -93,6 +95,9 @@ public class AutoPearlModule extends Module {
     private int reopenStep = 0;
     private long reopenAtMs = 0L;
     private int reopenTx, reopenTy, reopenTz;
+
+    private volatile boolean awaitingClickConfirmation = false;
+    private volatile long clickAttemptStartMs = 0L;
 
     private final Map<UUID, Long> chamberEmptySinceMs = new HashMap<>();
 
@@ -567,21 +572,21 @@ public class AutoPearlModule extends Module {
                     abortActivePull(PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.pullTimedOut, "timeout", PLUGIN_CONFIG.pullTimeoutSeconds));
                     return;
                 }
+            } else if (awaitingClickConfirmation) {
+                if (now - clickAttemptStartMs > CLICK_CONFIRM_TIMEOUT_MS) {
+                    warn("Interact confirmation for {} timed out after {}ms; reporting failure",
+                        labelOf(activePull), CLICK_CONFIRM_TIMEOUT_MS);
+                    if (BARITONE.isActive()) BARITONE.stop();
+                    abortActivePull(PLUGIN_MESSAGES.pullFailed);
+                    return;
+                }
             } else if (!pearlPresentNear(activePull.blockX, activePull.blockY, activePull.blockZ)) {
-                warn("Chamber for {} at ({}, {}, {}) is empty at the trapdoor; pruning and cancelling instead of clicking",
-                    labelOf(activePull), activePull.blockX, activePull.blockY, activePull.blockZ);
-                int cx = activePull.blockX, cy = activePull.blockY, cz = activePull.blockZ;
-                removeChamberAt(cx, cy, cz);
-                abortActivePull(PLUGIN_MESSAGES.chamberEmpty);
-                PLUGIN_CONFIG.pendingPulls.removeIf(p -> {
-                    if (p.blockX != cx || p.blockY != cy || p.blockZ != cz) return false;
-                    if (p.ownerName != null) sendWhisper(p.ownerName, PLUGIN_MESSAGES.chamberEmpty);
-                    return true;
-                });
+                abortForEmptyChamber(activePull);
                 return;
             } else if (isOwnerOnline(activePull.ownerUuid)) {
                 fireClick();
             } else {
+                submitTrapdoorFacingRotation(activePull);
                 long waitMs = (long) PLUGIN_CONFIG.waitForOwnerSeconds * 1000L;
                 if (waitMs > 0 && now - readyAtMs > waitMs) {
                     warn("{} did not come online within {}s; expiring pull",
@@ -658,6 +663,8 @@ public class AutoPearlModule extends Module {
         activePullStartMs = 0L;
         readyAtTrapdoor = false;
         readyAtMs = 0L;
+        awaitingClickConfirmation = false;
+        clickAttemptStartMs = 0L;
     }
 
     private boolean isChamberInRange(int x, int y, int z) {
@@ -739,6 +746,19 @@ public class AutoPearlModule extends Module {
         });
     }
 
+    private void abortForEmptyChamber(PearlBotConfig.PendingPull pull) {
+        warn("Chamber for {} at ({}, {}, {}) is empty at the trapdoor; pruning and cancelling instead of clicking",
+            labelOf(pull), pull.blockX, pull.blockY, pull.blockZ);
+        int cx = pull.blockX, cy = pull.blockY, cz = pull.blockZ;
+        removeChamberAt(cx, cy, cz);
+        abortActivePull(PLUGIN_MESSAGES.chamberEmpty);
+        PLUGIN_CONFIG.pendingPulls.removeIf(p -> {
+            if (p.blockX != cx || p.blockY != cy || p.blockZ != cz) return false;
+            if (p.ownerName != null) sendWhisper(p.ownerName, PLUGIN_MESSAGES.chamberEmpty);
+            return true;
+        });
+    }
+
     private void cancelPullsForChamber(PearlBotConfig.StasisChamber c) {
         if (activePull != null
             && activePull.blockX == c.x && activePull.blockY == c.y && activePull.blockZ == c.z) {
@@ -786,20 +806,73 @@ public class AutoPearlModule extends Module {
             }
             readyAtTrapdoor = true;
             readyAtMs = System.currentTimeMillis();
-            info("Ready at trapdoor for {} - {}",
-                label, isOwnerOnline(pull.ownerUuid) ? "owner online, clicking" : "waiting for owner online");
+
+            if (isOwnerOnline(pull.ownerUuid)) {
+                info("Ready at trapdoor for {} - owner online, interacting", label);
+                if (!pearlPresentNear(pull.blockX, pull.blockY, pull.blockZ)) {
+                    abortForEmptyChamber(pull);
+                } else {
+                    beginVerifiedClickAttempt(pull);
+                }
+            } else {
+                info("Ready at trapdoor for {} - waiting for owner online", label);
+            }
         });
     }
 
+    /**
+     * Fast path: fires the moment an owner who was offline logs back in. Must not add
+     * latency here, so this skips InputManager/rightClickBlock's verification and just
+     * fires the packet directly - correctness instead comes from continuously re-facing
+     * the trapdoor throughout the wait via {@link #submitTrapdoorFacingRotation}.
+     */
     private void fireClick() {
         PearlBotConfig.PendingPull pull = activePull;
         if (pull == null) return;
+        sendUseItemOn(pull.blockX, pull.blockY, pull.blockZ);
+        completePullSuccess(pull);
+    }
+
+    /**
+     * Used when the owner was already online by the time positioning finished, so there's
+     * no live login event to react to and the extra tick or two rightClickBlock costs (it
+     * routes rotation+click through InputManager, applied on the next tick) doesn't matter.
+     * Unlike {@link #fireClick()}, this verifies the interact actually landed before
+     * declaring success.
+     */
+    private void beginVerifiedClickAttempt(PearlBotConfig.PendingPull pull) {
+        awaitingClickConfirmation = true;
+        clickAttemptStartMs = System.currentTimeMillis();
+        BARITONE.rightClickBlock(pull.blockX, pull.blockY, pull.blockZ).addExecutedListener(req -> {
+            if (activePull == null || !pull.ownerUuid.equals(activePull.ownerUuid)) return;
+            if (!awaitingClickConfirmation) return;
+            awaitingClickConfirmation = false;
+
+            if (req.getNow()) {
+                completePullSuccess(pull);
+            } else {
+                warn("Interact with trapdoor for {} could not be confirmed; reporting failure", labelOf(pull));
+                abortActivePull(PLUGIN_MESSAGES.pullFailed);
+            }
+        });
+    }
+
+    private void submitTrapdoorFacingRotation(PearlBotConfig.PendingPull pull) {
+        var rotation = RotationHelper.rotationTo(pull.blockX + 0.5, pull.blockY, pull.blockZ + 0.5);
+        INPUTS.submit(InputRequest.builder()
+            .owner(this)
+            .yaw(rotation.getX())
+            .pitch(rotation.getY())
+            .priority(FACE_TRAPDOOR_PRIORITY)
+            .build());
+    }
+
+    private void completePullSuccess(PearlBotConfig.PendingPull pull) {
         int tx = pull.blockX;
         int ty = pull.blockY;
         int tz = pull.blockZ;
         String label = labelOf(pull);
 
-        sendUseItemOn(tx, ty, tz);
         if (PLUGIN_CONFIG.reopenTrapdoors) {
             reopenTx = tx;
             reopenTy = ty;
