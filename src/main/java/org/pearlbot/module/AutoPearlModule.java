@@ -496,7 +496,8 @@ public class AutoPearlModule extends Module {
 
     private void sendWhisper(String name, String message) {
         if (name == null || name.isBlank()) return;
-        String suffix = String.format("%016x", ThreadLocalRandom.current().nextLong());
+        String suffix = String.format("%016x", ThreadLocalRandom.current().nextLong())
+            + String.format("%08x", ThreadLocalRandom.current().nextInt());
         sendClientPacketAsync(ChatUtil.getWhisperChatPacket(name, message + " [" + suffix + "]"));
     }
 
