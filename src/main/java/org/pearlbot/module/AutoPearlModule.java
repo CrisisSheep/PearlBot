@@ -518,13 +518,6 @@ public class AutoPearlModule extends Module {
         enqueuePull(ownerUuid, name, chamber, "max chambers exceeded");
     }
 
-    private int remainingPearlsFor(UUID ownerUuid) {
-        if (ownerUuid == null) return 0;
-        return (int) PLUGIN_CONFIG.chambers.values().stream()
-            .filter(c -> ownerUuid.equals(c.ownerUuid))
-            .count();
-    }
-
     public boolean enqueuePull(UUID ownerUuid, String requesterName, PearlBotConfig.StasisChamber chamber) {
         return enqueuePull(ownerUuid, requesterName, chamber, null);
     }
@@ -892,8 +885,13 @@ public class AutoPearlModule extends Module {
         if (pull.source != null) pullEmbed.addField("Triggered by", pull.source);
         pullNotification(pullEmbed.successColor(), false);
 
-        // Chamber is still in the map until the entity despawns, so subtract 1 to compensate.
-        int remaining = Math.max(0, remainingPearlsFor(pull.ownerUuid) - 1);
+        // Don't rely on the pulled chamber having been removed from the map yet - the
+        // despawn packet that triggers removal races with this code. Exclude it by
+        // position explicitly instead of assuming it's (not) still present.
+        int remaining = (int) PLUGIN_CONFIG.chambers.values().stream()
+            .filter(c -> pull.ownerUuid.equals(c.ownerUuid))
+            .filter(c -> c.x != tx || c.y != ty || c.z != tz)
+            .count();
         if (pull.ownerName != null) {
             String tail = remaining == 1 ? "1 pearl" : remaining + " pearls";
             sendWhisper(pull.ownerName, PLUGIN_MESSAGES.format(PLUGIN_MESSAGES.pulled, "remaining", tail));
